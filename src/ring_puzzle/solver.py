@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
 
 
+ENDGAME_RUN_LENGTH = 16
+
+
 def normalize(ring: list[int]) -> list[int]:
     """Normalize the ring.
 
@@ -137,16 +140,6 @@ def rotate_shortest(state: RingState, left_steps: int) -> RingState:
     return rotate_right(state, right_steps)
 
 
-def _stage_target_for_shift_left3(state: RingState, target_position: int) -> RingState:
-    """Rotate so the target bead sits at index 3 for a `shift_left3` step."""
-    return rotate_shortest(state, (target_position - 3) % len(state.ring))
-
-
-def _stage_gap_front(state: RingState, run_end: int) -> RingState:
-    """Rotate so the unsolved gap immediately after the protected run starts at index 0."""
-    return rotate_shortest(state, (run_end + 1) % len(state.ring))
-
-
 def extend_max_run(state: RingState) -> RingState:
     """Extend the longest run of consecutive numbers by one, if possible.
 
@@ -181,43 +174,40 @@ def extend_max_run(state: RingState) -> RingState:
                 "Ring is already solved, no moves needed to extend the run."
             )
 
-        # Calculate the end index of the run for convenience.
-        run_end = (start_index + run_length - 1) % ring_size
-
-        # Calculate the number of beads that are not part of the protected run, which is important
-        # for determining if we can manipulate the ring without touching the run.
+        # Calculate the number of beads that are not part of the protected run.
         unsolved_length = ring_size - run_length
 
-        # If the distance is large enough, we can directly stage the target bead for a `shift_left3`
-        # step.
-        if dist > 4:
-            target_position = (run_end + dist) % ring_size
-            state = _stage_target_for_shift_left3(state, target_position)
-            state = shift_left3(state)
-            continue
+        # Find the target bead (next consecutive number after the run).
+        num_run_start = state.ring[start_index]
+        num_run_end = ((num_run_start + run_length - 2) % ring_size) + 1
+        next_consecutive = (num_run_end % ring_size) + 1
+        target_pos = None
+        for i in range(ring_size):
+            if state.ring[i] == next_consecutive:
+                target_pos = i
+                break
 
-        if dist == 4:
-            # Move the end of the run to just before the flip region, so the target bead sits at
-            # the fourth flippable position, then apply the shift_left3 macro.
-            state = _stage_gap_front(state, run_end)
+        # Rotate target into the flip area and apply the appropriate shift operation.
+        # Each shift_leftN expects the target at a specific position:
+        # - shift_left1: target at position 1
+        # - shift_left2: target at position 2
+        # - shift_left3: target at position 3
+        if dist > 4 or dist == 4:
+            state = rotate_shortest(state, (target_pos - 3) % ring_size)
             state = shift_left3(state)
         elif dist == 3:
             if unsolved_length < 5:
                 raise ValueError(
                     "Cannot extend the run without touching it, need a different strategy."
                 )
-            # Move the end of the run to just before the flip region, so the target bead sits at
-            # the third flippable position, then apply the shift_left2 macro.
-            state = _stage_gap_front(state, run_end)
+            state = rotate_shortest(state, (target_pos - 2) % ring_size)
             state = shift_left2(state)
         elif dist == 2:
             if unsolved_length < 5:
                 raise ValueError(
                     "Cannot extend the run without touching it, need a different strategy."
                 )
-            # Move the end of the run to just before the flip region, so the target bead sits at
-            # the second flippable position, then apply the shift_left1 macro.
-            state = _stage_gap_front(state, run_end)
+            state = rotate_shortest(state, (target_pos - 1) % ring_size)
             state = shift_left1(state)
         else:
             raise ValueError(f"Unexpected distance value: {dist}")
@@ -282,3 +272,66 @@ def shift_left1(state: RingState) -> RingState:
         offset=state.offset,
         moves=state.moves + ["F", "L", "F", "R", "F"],
     )
+
+
+def solve_from_state(state: RingState) -> RingState:
+    """Solve from the given state using constructive then endgame phases.
+
+    This repeatedly applies the constructive macro phase until the protected run
+    reaches the endgame threshold, then delegates to the endgame lookup solver.
+    """
+    ring_size = len(state.ring)
+
+    while True:
+        _, run_length, _ = get_max_run(state.ring)
+
+        if run_length == ring_size:
+            return state
+
+        if run_length >= ENDGAME_RUN_LENGTH:
+            # Import lazily to avoid a module cycle during import-time.
+            from .endgame import solve_endgame
+
+            return solve_endgame(state)
+
+        state = extend_max_run(state)
+
+
+def solve_moves(ring: list[int]) -> list[str]:
+    """Return a full replayable move sequence that solves the ring."""
+    moves = solve_from_state(RingState(ring=ring)).moves
+    return cancel_opposite_rotations(moves)
+
+
+def cancel_opposite_rotations(moves: list[str]) -> list[str]:
+    """Remove consecutive opposite rotation pairs (LR or RL) from move sequence.
+    
+    Since L and R are inverses, LR and RL are identity operations and can be eliminated.
+    This optimization is safe because:
+    - L: rotate left (first element to end)
+    - R: rotate right (last element to front)
+    - L then R: net effect is identity on the ring
+    - R then L: net effect is identity on the ring
+    
+    Args:
+        moves: List of moves, each being 'L', 'R', or 'F'
+    
+    Returns:
+        Optimized move list with opposite rotation pairs removed
+    """
+    optimized: list[str] = []
+    i = 0
+    while i < len(moves):
+        if (
+            i < len(moves) - 1
+            and (
+                (moves[i] == "L" and moves[i + 1] == "R")
+                or (moves[i] == "R" and moves[i + 1] == "L")
+            )
+        ):
+            # Skip both moves (they cancel)
+            i += 2
+        else:
+            optimized.append(moves[i])
+            i += 1
+    return optimized
