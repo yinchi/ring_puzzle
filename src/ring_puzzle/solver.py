@@ -30,23 +30,10 @@ For N=3 the shift costs 1 move (F); for N=2, 4 moves; for N=1, 5 moves.
 """
 
 from .endgame import solve_endgame
-from .shifts import (
-    shift_left1,
-    shift_left2,
-    shift_left3,
-    shift_right1,
-    shift_right2,
-    shift_right3,
-)
-from .util import (
-    ENDGAME_RUN_LENGTH,
-    FLIP_SIZE,
-    MoveList,
-    RingState,
-    get_max_run,
-    is_solved,
-    rotate_shortest,
-)
+from .shifts import (shift_left1, shift_left2, shift_left3, shift_right1,
+                     shift_right2, shift_right3)
+from .util import (ENDGAME_RUN_LENGTH, FLIP_SIZE, MoveList, RingState,
+                   get_max_run, is_solved, rotate_shortest)
 
 
 def extend_tail(state: RingState) -> RingState:
@@ -223,7 +210,11 @@ def _two_ended_extend(state: RingState) -> RingState:
         else float("inf")
     )
 
-    return tail_state if tail_cost <= head_cost else head_state
+    if tail_cost <= head_cost:
+        assert tail_state is not None
+        return tail_state
+    assert head_state is not None
+    return head_state
 
 
 def solve_from_state(state: RingState) -> RingState:
@@ -245,7 +236,7 @@ def solve_from_state(state: RingState) -> RingState:
         state = _two_ended_extend(state)
 
 
-def solve_moves(ring: MoveList) -> MoveList:
+def solve_moves(ring: list[int]) -> MoveList:
     """Return a full replayable move sequence that solves the ring.
 
     Runs the two-phase solver (early-game greedy + endgame table lookup) and

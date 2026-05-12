@@ -30,18 +30,10 @@ from itertools import permutations
 from pathlib import Path
 from threading import Lock
 from time import monotonic
+from typing import TextIO
 
-from .util import (
-    ENDGAME_RUN_LENGTH,
-    FLIP_SIZE,
-    MoveList,
-    Quartet,
-    RingState,
-    get_max_run,
-    is_solved,
-    normalize,
-    rotate_shortest,
-)
+from .util import (ENDGAME_RUN_LENGTH, FLIP_SIZE, MoveList, Quartet, RingState,
+                   get_max_run, is_solved, normalize, rotate_shortest)
 
 # Cannot use our early-game solver once the protected run is length 16, so we need a separate
 # endgame table keyed by the 4 flipping beads.
@@ -258,7 +250,7 @@ def _reconstruct_reverse_tail(
 
 def generate_endgame_table_interleaved(
     *,
-    progress_stream: object = sys.stderr,
+    progress_stream: TextIO = sys.stderr,
     log_state_interval: int = 1_000_000,
     remaining_log_threshold: int = 4,
     n_workers: int | None = None,
@@ -287,7 +279,7 @@ def generate_endgame_table_interleaved(
     ########################
 
     # Each permutation of ENDGAME_VALUES is a key, and we will solve for all of them simultaneously.
-    keys = sorted(permutations(ENDGAME_VALUES))
+    keys: list[Quartet] = sorted(permutations(ENDGAME_VALUES))  # type: ignore[arg-type]
 
     # Map each move to its inverse.
     inverse_move = {"L": "R", "R": "L", "F": "F"}

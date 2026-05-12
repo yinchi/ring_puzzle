@@ -50,7 +50,9 @@ def _draw(
     stdscr: curses.window,
     ring: list[int],
     moves: int,
+    flips: int,
     auto_moves: int,
+    auto_flips: int,
     solved: bool,
     autosolving: bool = False,
 ) -> None:
@@ -61,19 +63,34 @@ def _draw(
     stdscr.addstr(PAD_TOP, PAD_LEFT, _OBJECTIVE)
     for i, line in enumerate(FMT_RING.format(*ring).splitlines()):
         stdscr.addstr(ring_row + i, PAD_LEFT + INDENT, line)
-    stdscr.addstr(ring_row, PAD_LEFT + INDENT + 6, FMT_RING_RED.format(*ring[:FLIP_SIZE]), curses.color_pair(1))
+    stdscr.addstr(
+        ring_row,
+        PAD_LEFT + INDENT + 6,
+        FMT_RING_RED.format(*ring[:FLIP_SIZE]),
+        curses.color_pair(1),
+    )
 
-    suffix = f" ({auto_moves} auto)" if auto_moves else ""
+    base = f"{moves} moves, {flips} flips"
+    auto_suffix = (
+        f" (auto: {auto_moves} moves, {auto_flips} flips)" if auto_moves else ""
+    )
     if solved:
         stdscr.addstr(
-            ring_row + 7, PAD_LEFT, f"Solved in {moves} moves!{suffix}", curses.A_BOLD | curses.color_pair(1)
+            ring_row + 7,
+            PAD_LEFT,
+            f"Solved in {base}!{auto_suffix}",
+            curses.A_BOLD | curses.color_pair(1),
         )
         if not autosolving:
             stdscr.addstr(ring_row + 8, PAD_LEFT, "(n)ew (q)uit")
     else:
-        stdscr.addstr(ring_row + 7, PAD_LEFT, f"Moves: {moves}{suffix}")
-        if not autosolving:
-            stdscr.addstr(ring_row + 8, PAD_LEFT, _LEGEND)
+        status = f"{base}{auto_suffix}"
+        if autosolving:
+            stdscr.addstr(ring_row + 7, PAD_LEFT, status)
+        else:
+            stdscr.addstr(
+                ring_row + 7, PAD_LEFT, f"{status}\n{' ' * PAD_LEFT}{_LEGEND}"
+            )
 
     stdscr.refresh()
 
@@ -90,7 +107,9 @@ def program(stdscr: curses.window) -> None:
 
     ring = random.sample(range(1, RING_SIZE + 1), RING_SIZE)
     moves = 0
+    flips = 0
     auto_moves = 0
+    auto_flips = 0
 
     while True:
         rows, cols = stdscr.getmaxyx()
@@ -107,7 +126,7 @@ def program(stdscr: curses.window) -> None:
             continue
 
         solved = is_solved(ring)
-        _draw(stdscr, ring, moves, auto_moves, solved)
+        _draw(stdscr, ring, moves, flips, auto_moves, auto_flips, solved)
 
         # get user input
         key = stdscr.getch()
@@ -122,10 +141,13 @@ def program(stdscr: curses.window) -> None:
         elif key == ord("f") and not solved:
             ring[:FLIP_SIZE] = reversed(ring[:FLIP_SIZE])
             moves += 1
+            flips += 1
         elif key == ord("n"):
             ring = random.sample(range(1, RING_SIZE + 1), RING_SIZE)
             moves = 0
+            flips = 0
             auto_moves = 0
+            auto_flips = 0
         elif key == ord("a") and not solved:
             solution = solve_moves(ring[:])
             for move in solution:
@@ -135,9 +157,20 @@ def program(stdscr: curses.window) -> None:
                     ring = ring[-1:] + ring[:-1]
                 elif move == "F":
                     ring[:FLIP_SIZE] = reversed(ring[:FLIP_SIZE])
+                    flips += 1
+                    auto_flips += 1
                 moves += 1
                 auto_moves += 1
-                _draw(stdscr, ring, moves, auto_moves, is_solved(ring), autosolving=True)
+                _draw(
+                    stdscr,
+                    ring,
+                    moves,
+                    flips,
+                    auto_moves,
+                    auto_flips,
+                    is_solved(ring),
+                    autosolving=True,
+                )
                 curses.napms(AUTO_SOLVE_DELAY_MS)
 
 
