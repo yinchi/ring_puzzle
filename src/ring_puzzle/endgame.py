@@ -18,19 +18,40 @@ from .solver import (
     rotate_shortest,
 )
 
-ENDGAME_SIZE = 4
-ENDGAME_VALUES = (17, 18, 19, 20)
-SOLVED_ENDGAME_KEY = ENDGAME_VALUES
-MOVE_ORDER = ("L", "R", "F")
-CYCLE_SETUP_DEPTH = 6
+# Four ints, e.g. the values of the 4 beads in the flipping zone of the puzzle.
+type Quartet = tuple[int, int, int, int]
 
+# MoveList stores raw atomic moves only (L, R, F).
+# Compact forms like L3 and symbolic forms like S2/M5 are reporting notations, not MoveList items.
+# S2 and S3 are the 2-cycle and 3-cycle macros from the notes, and S3' is the inverse of S3.
+# Notes: https://www.sfu.ca/~jtmulhol/math302/puzzles-ot.html
+type MoveList = list[str]
+
+# Cannot use our early-game solver once the protected run is length 16, so we need a separate
+# endgame table keyed by the 4 flipping beads.
+ENDGAME_SIZE = 4
+
+# In the normalized ring state, the target beads in the flipping zone are always 17, 18, 19, 20.
+ENDGAME_VALUES = (17, 18, 19, 20)
+
+# Legal raw moves that can be applied to the ring.
+LEGAL_MOVES = ("L", "R", "F")
+
+# Contains best known solutions for each endgame key as concrete move lists.
 _TABLE_PATH = Path(__file__).with_name("endgame.json")
+# Contains detailed analysis of optimal cycle-based solutions for each endgame key,
+# including macro expansions and step-by-step traces.
 _MACRO_REPORT_PATH = Path(__file__).with_name("endgame_macro_report.json")
-_TABLE_CACHE: dict[tuple[int, int, int, int], list[str]] | None = None
+
+# In-memory cache for the generated endgame table to avoid recomputation on repeated runs.
+_TABLE_CACHE: dict[Quartet, MoveList] | None = None
 
 
 def _apply_move_to_ring(ring: list[int], move: str) -> list[int]:
-    """Apply one legal move to a ring and return a new ring."""
+    """Apply one legal move to a ring and return a new ring.
+    
+    Works on raw int lists, not RingState, and does not track moves or offsets.
+    """
     if move == "L":
         return ring[1:] + ring[:1]
     if move == "R":
@@ -51,7 +72,7 @@ def _apply_move_to_state(state: RingState, move: str) -> RingState:
     )
 
 
-def _apply_moves_to_ring(ring: list[int], moves: list[str]) -> list[int]:
+def _apply_moves_to_ring(ring: list[int], moves: MoveList) -> list[int]:
     """Apply a sequence of legal moves to a ring and return the resulting ring."""
     state = ring[:]
     for move in moves:
@@ -60,27 +81,43 @@ def _apply_moves_to_ring(ring: list[int], moves: list[str]) -> list[int]:
 
 
 def _truncate_useless_rotations(
-    start_ring: list[int], moves: list[str]
-) -> list[str]:
+    start_ring: list[int], moves: MoveList
+) -> MoveList:
     """Trim a solution once the ring is solved up to rotation."""
     state = start_ring[:]
     for index, move in enumerate(moves, start=1):
         state = _apply_move_to_ring(state, move)
+        # If the max run is the whole ring, the ring is solved.
+        # Discard any remaining moves, which must be rotations that don't affect the solution.
         if get_max_run(state)[1] == len(state):
             return moves[:index]
     return moves
 
 
 def _canonical_view(ring: list[int]) -> tuple[list[int], int, int]:
-    """Return canonical normalized+anchored ring, run length, and run anchor in live indices."""
+    """Build the canonical view of a ring for endgame keying.
+    
+    Returns (anchored, run_length, run_start) where:
+    - `anchored` is the normalized ring logically rotated so the protected run starts at index 0.
+      Note normalization relabels beads via a cyclic shift so that the protected run starts with
+      bead 1.
+    - `run_length` is the length of the longest run of consecutive beads in the normalized ring.
+    - `run_start` is the index in the normalized ring where the longest run starts.
+    """
     normalized = normalize(ring)
     run_start, run_length, _ = get_max_run(normalized)
     anchored = normalized[run_start:] + normalized[:run_start]
     return anchored, run_length, run_start
 
 
-def canonical_lookup_key(ring: list[int]) -> tuple[int, int, int, int]:
+def canonical_lookup_key(ring: list[int]) -> Quartet:
     """Build the canonical endgame key from a live ring.
+
+    The key is formed from the last 4 beads in the canonical view, as the early-game solver
+    can always solve down to a protected run of length 16. When solving the endgame, the ring
+    is rotated into a canonical orientation where the protected run starts at index 0 and contains
+    beads 1..16 (normalized), then an endgame move sequence is looked up based on the 4 remaining
+    beads, which when canonicalized form our endgame key.
 
     Canonicalization is lookup-only: relabel values so the protected run starts at 1,
     then logically rotate so the run anchor is index 0.
@@ -102,24 +139,28 @@ def canonical_lookup_key(ring: list[int]) -> tuple[int, int, int, int]:
     return suffix  # type: ignore[return-value]
 
 
-def _representative_ring(key: tuple[int, int, int, int]) -> list[int]:
-    """Construct the canonical representative ring for a key."""
+def _representative_ring(key: Quartet) -> list[int]:
+    """Construct the canonical representative ring for a key.
+    
+    This is always `1..16` followed by the key.
+    """
     return list(range(1, ENDGAME_RUN_LENGTH + 1)) + list(key)
 
 
-def _inverse_moves(moves: list[str]) -> list[str]:
-    """Return inverse move sequence for legal move list."""
+def _inverse_moves(moves: MoveList) -> MoveList:
+    """Return inverse move sequence for a legal move list."""
     inverse = {"L": "R", "R": "L", "F": "F"}
     return [inverse[move] for move in reversed(moves)]
 
 
-def _moves_to_notation(moves: list[str]) -> str:
-    """Convert move list to compact notation like L2 R3 F.
-    
-    Note: F is never repeated consecutively (F² = identity), so we omit the count.
+def _compact_rotations(moves: MoveList) -> str:
+    """Write a sequence of moves as a compact string with counts for consecutive rotations.
+
+    E.g. LLLRLLLF -> "L3 R1 L3 F1", and FLLLRR -> "F1 L3 R2".
     """
     if not moves:
         return "ε"
+
     result = []
     prev_move = None
     count = 0
@@ -137,561 +178,41 @@ def _moves_to_notation(moves: list[str]) -> str:
     if prev_move is not None:
         if prev_move == "F":
             result.append("F")
-        else:
+        elif prev_move in ("L", "R"):
             result.append(f"{prev_move}{count}")
+        else:
+            raise ValueError(f"Unexpected move in compact_rotations: {prev_move}")
     return " ".join(result)
 
 
-def _decompose_macro_to_expansion(macro: list[str]) -> str:
-    """Decompose a macro into beta-sigma-beta' form returning full symbolic representation."""
-    sigma2 = _sigma2_moves()
-    sigma3 = _sigma3_moves()
-    sigma3_inv = _inverse_moves(sigma3)
 
-    sigmas = [
-        (sigma2, "S2"),
-        (sigma3, "S3"),
-        (sigma3_inv, "S3'"),
-    ]
 
-    for sigma, sigma_name in sigmas:
-        sigma_len = len(sigma)
-        for i in range(len(macro) - sigma_len + 1):
-            if macro[i : i + sigma_len] == sigma:
-                beta_left = macro[:i]
-                beta_right = macro[i + sigma_len :]
 
-                expected_right = _inverse_moves(beta_left)
-                if beta_right == expected_right:
-                    left_notation = _moves_to_notation(beta_left)
-                    beta_inv = _inverse_moves(beta_left)
-                    right_notation = _moves_to_notation(beta_inv)
-                    
-                    # Format: "beta sigma beta'" or just "sigma" if beta is empty
-                    if left_notation == "ε":
-                        return sigma_name
-                    else:
-                        return f"{left_notation} {sigma_name} {right_notation}".strip()
 
-    return "UNKNOWN"
 
-
-
-def _generate_setup_sequences(max_depth: int) -> list[list[str]]:
-    """Generate setup sequences β up to max depth for beta-sigma-beta^-1 macros."""
-    if max_depth < 0:
-        raise ValueError("max_depth must be >= 0")
-
-    inverse = {"L": "R", "R": "L", "F": "F"}
-    sequences: list[tuple[str, ...]] = [()]
-    frontier: list[tuple[str, ...]] = [()]
-
-    for _ in range(max_depth):
-        next_frontier: list[tuple[str, ...]] = []
-        for seq in frontier:
-            for move in MOVE_ORDER:
-                # Skip immediate canceling pairs like LR, RL, and FF.
-                if seq and inverse[move] == seq[-1]:
-                    continue
-                candidate = seq + (move,)
-                sequences.append(candidate)
-                next_frontier.append(candidate)
-        frontier = next_frontier
-
-    return [list(seq) for seq in sequences]
-
-
-def _minimize_macro_catalog(catalog: list[list[str]]) -> list[list[str]]:
-    """Keep one shortest deterministic macro per directed 24-key transition."""
-    best_by_edge: dict[
-        tuple[tuple[int, int, int, int], tuple[int, int, int, int]], list[str]
-    ] = {}
-    for macro in catalog:
-        for key in sorted(permutations(ENDGAME_VALUES)):
-            representative = _representative_ring(key)
-            moved = _apply_moves_to_ring(representative, macro)
-            try:
-                next_key = canonical_lookup_key(moved)
-            except ValueError:
-                continue
-            edge = (key, next_key)
-            incumbent = best_by_edge.get(edge)
-            if incumbent is None or len(macro) < len(incumbent) or (
-                len(macro) == len(incumbent) and tuple(macro) < tuple(incumbent)
-            ):
-                best_by_edge[edge] = macro
-
-    minimized = sorted(
-        {tuple(macro): macro for macro in best_by_edge.values()}.values(),
-        key=lambda m: (len(m), tuple(m)),
-    )
-    return minimized
-
-
-def _sigma2_moves() -> list[str]:
-    """2-cycle macro from notes: (T R^-1)^17 -> (F L)^17 in our move symbols."""
-    return ["F", "L"] * 17
-
-
-def _sigma3_moves() -> list[str]:
-    """3-cycle macro from notes: [R^-3, T]^2 translated to L/R/F moves."""
-    return ["L", "L", "L", "F", "R", "R", "R", "F"] * 2
-
-
-def _build_cycle_macro_catalog(
-    ring_size: int,
-    setup_depth: int = CYCLE_SETUP_DEPTH,
-) -> list[list[str]]:
-    """Build conjugated cycle macros by rotating around the ring.
-
-    Each macro is a concrete legal move list that can be replayed directly on a ring.
-    """
-    sigma2 = _sigma2_moves()
-    sigma3 = _sigma3_moves()
-    sigma3_inv = _inverse_moves(sigma3)
-    setup_sequences = _generate_setup_sequences(setup_depth)
-
-    catalog: list[list[str]] = []
-    seen: set[tuple[str, ...]] = set()
-
-    for shift in range(ring_size):
-        rotate = ["L"] * shift
-        unrotate = ["R"] * shift
-        for core in (sigma2, sigma3, sigma3_inv):
-            candidate = rotate + core + unrotate
-            key = tuple(candidate)
-            if key in seen:
-                continue
-            seen.add(key)
-            catalog.append(candidate)
-
-    for beta in setup_sequences:
-        beta_inv = _inverse_moves(beta)
-        for core in (sigma2, sigma3, sigma3_inv):
-            candidate = beta + core + beta_inv
-            key = tuple(candidate)
-            if key in seen:
-                continue
-            seen.add(key)
-            catalog.append(candidate)
-
-    return _minimize_macro_catalog(catalog)
-
-
-def _macro_neighbors_by_key(
-    macros: list[list[str]],
-) -> dict[tuple[int, int, int, int], list[tuple[tuple[int, int, int, int], int]]]:
-    """Build key-graph neighbors as (next_key, macro_index)."""
-    keys = sorted(permutations(ENDGAME_VALUES))
-    neighbors: dict[tuple[int, int, int, int], list[tuple[tuple[int, int, int, int], int]]] = {
-        key: [] for key in keys
-    }
-
-    for key in keys:
-        representative = _representative_ring(key)
-        candidate_by_next: dict[tuple[int, int, int, int], int] = {}
-        for index, macro in enumerate(macros):
-            moved = _apply_moves_to_ring(representative, macro)
-            try:
-                next_key = canonical_lookup_key(moved)
-            except ValueError:
-                continue
-
-            incumbent = candidate_by_next.get(next_key)
-            if incumbent is None:
-                candidate_by_next[next_key] = index
-                continue
-
-            incumbent_macro = macros[incumbent]
-            if len(macro) < len(incumbent_macro) or (
-                len(macro) == len(incumbent_macro) and tuple(macro) < tuple(incumbent_macro)
-            ):
-                candidate_by_next[next_key] = index
-
-        neighbors[key] = sorted(
-            [(next_key, macro_index) for next_key, macro_index in candidate_by_next.items()],
-            key=lambda item: (item[0], item[1]),
-        )
-
-    return neighbors
-
-
-def generate_optimal_macro_paths(
-    macros: list[list[str]] | None = None,
-) -> dict[tuple[int, int, int, int], list[int]]:
-    """Compute shortest per-key macro-index paths to solved key on the key graph."""
-    if macros is None:
-        macros = _build_cycle_macro_catalog(ENDGAME_RUN_LENGTH + ENDGAME_SIZE)
-
-    keys = sorted(permutations(ENDGAME_VALUES))
-    target = SOLVED_ENDGAME_KEY
-    neighbors = _macro_neighbors_by_key(macros)
-
-    paths: dict[tuple[int, int, int, int], list[int]] = {}
-    for start in keys:
-        if start == target:
-            paths[start] = []
-            continue
-
-        dist: dict[tuple[int, int, int, int], int] = {start: 0}
-        path_by_key: dict[tuple[int, int, int, int], list[int]] = {start: []}
-        pq: list[tuple[int, tuple[int, int, int, int]]] = [(0, start)]
-        found = False
-
-        while pq:
-            cost, node = heappop(pq)
-            if cost != dist[node]:
-                continue
-            if node == target:
-                found = True
-                break
-
-            for nxt, macro_index in neighbors[node]:
-                macro_len = len(macros[macro_index])
-                next_cost = cost + macro_len
-                next_path = path_by_key[node] + [macro_index]
-                incumbent = dist.get(nxt)
-                if (
-                    incumbent is None
-                    or next_cost < incumbent
-                    or (next_cost == incumbent and next_path < path_by_key[nxt])
-                ):
-                    dist[nxt] = next_cost
-                    path_by_key[nxt] = next_path
-                    heappush(pq, (next_cost, nxt))
-
-        if not found:
-            raise RuntimeError(f"No macro path found for key {start}.")
-
-        paths[start] = path_by_key[target]
-
-    return paths
-
-
-def _pruned_macro_catalog_from_paths(
-    macros: list[list[str]],
-    paths: dict[tuple[int, int, int, int], list[int]],
-) -> tuple[list[list[str]], list[int]]:
-    """Return (pruned_catalog, used_indices) from optimal per-key macro paths."""
-    used_indices = sorted({index for path in paths.values() for index in path})
-    pruned_catalog = [macros[index] for index in used_indices]
-    return pruned_catalog, used_indices
-
-
-def _rotation_moves_for_left_steps(left_steps: int, ring_size: int) -> list[str]:
-    """Return shortest concrete rotation move list for a net left rotation."""
-    left_steps %= ring_size
-    right_steps = (ring_size - left_steps) % ring_size
-    if left_steps <= right_steps:
-        return ["L"] * left_steps
-    return ["R"] * right_steps
-
-
-def _find_continuous_trace_for_macro_indices(
-    start_ring: list[int],
-    macro_indices: list[int],
-    macros: list[list[str]],
-) -> tuple[list[dict[str, object]], list[str], list[int]]:
-    """Build a label-consistent physical trace by inserting rotations before each macro.
-
-    Returns (step_records, flat_move_list, final_ring).
-    """
-    ring_size = len(start_ring)
-
-    # tuple(ring) -> (total_rotation_cost, rotation_sequences_before_each_macro)
-    frontier: dict[tuple[int, ...], tuple[int, list[list[str]]]] = {
-        tuple(start_ring): (0, [])
-    }
-
-    for macro_index in macro_indices:
-        macro = macros[macro_index]
-        next_frontier: dict[tuple[int, ...], tuple[int, list[list[str]]]] = {}
-
-        for ring_tuple, (rotation_cost, rotations_so_far) in frontier.items():
-            ring = list(ring_tuple)
-            for left_steps in range(ring_size):
-                rotation = _rotation_moves_for_left_steps(left_steps, ring_size)
-                rotated = _apply_moves_to_ring(ring, rotation)
-                after_macro = _apply_moves_to_ring(rotated, macro)
-                after_tuple = tuple(after_macro)
-
-                candidate_cost = rotation_cost + len(rotation)
-                candidate_rotations = rotations_so_far + [rotation]
-                incumbent = next_frontier.get(after_tuple)
-                if incumbent is None or (
-                    candidate_cost < incumbent[0]
-                    or (
-                        candidate_cost == incumbent[0]
-                        and candidate_rotations < incumbent[1]
-                    )
-                ):
-                    next_frontier[after_tuple] = (candidate_cost, candidate_rotations)
-
-        frontier = next_frontier
-
-    solved_candidates: list[tuple[int, list[list[str]], tuple[int, ...]]] = []
-    for ring_tuple, (rotation_cost, rotations) in frontier.items():
-        if get_max_run(list(ring_tuple))[1] == ring_size:
-            solved_candidates.append((rotation_cost, rotations, ring_tuple))
-
-    if not solved_candidates:
-        raise RuntimeError("Could not stitch a continuous trace for macro path.")
-
-    solved_candidates.sort(key=lambda item: (item[0], item[1], item[2]))
-    _, chosen_rotations, final_ring_tuple = solved_candidates[0]
-
-    step_records: list[dict[str, object]] = []
-    flat_moves: list[str] = []
-    ring = start_ring[:]
-
-    for step_number, (macro_index, rotation) in enumerate(
-        zip(macro_indices, chosen_rotations), start=1
-    ):
-        macro = macros[macro_index]
-        after_rotation = _apply_moves_to_ring(ring, rotation)
-        after_macro = _apply_moves_to_ring(after_rotation, macro)
-
-        step_records.append(
-            {
-                "step": step_number,
-                "macro_index": macro_index,
-                "macro_moves": "".join(macro),
-                "rotation_before_macro": "".join(rotation),
-                "before_ring": ring,
-                "after_rotation_ring": after_rotation,
-                "after_macro_ring": after_macro,
-                "max_run_after_macro": get_max_run(after_macro)[1],
-            }
-        )
-
-        flat_moves.extend(rotation)
-        flat_moves.extend(macro)
-        ring = after_macro
-
-    return step_records, flat_moves, list(final_ring_tuple)
-
-
-def generate_macro_analysis_report(
-    path: Path | None = None,
-) -> dict[str, object]:
-    """Build optimal macro paths, prune catalog, and emit continuous traces report."""
-    target_path = _MACRO_REPORT_PATH if path is None else path
-    ring_size = ENDGAME_RUN_LENGTH + ENDGAME_SIZE
-    macros = _build_cycle_macro_catalog(ring_size)
-    optimal_paths = generate_optimal_macro_paths(macros)
-    pruned_catalog, used_indices = _pruned_macro_catalog_from_paths(macros, optimal_paths)
-
-    # Verify pruning preserves all optimal solutions.
-    index_remap = {old: new for new, old in enumerate(used_indices)}
-    remapped_paths: dict[tuple[int, int, int, int], list[int]] = {
-        key: [index_remap[index] for index in path]
-        for key, path in optimal_paths.items()
-    }
-    pruned_paths = generate_optimal_macro_paths(pruned_catalog)
-    if pruned_paths != remapped_paths:
-        raise RuntimeError("Pruned macro catalog changed optimal macro paths.")
-
-    entries: dict[str, object] = {}
-    for key in sorted(permutations(ENDGAME_VALUES)):
-        start_ring = _representative_ring(key)
-        macro_indices = optimal_paths[key]
-        steps, full_moves, final_ring = _find_continuous_trace_for_macro_indices(
-            start_ring,
-            macro_indices,
-            macros,
-        )
-
-        macro_plan_tokens: list[str] = []
-        rings_after_macros: list[list[int]] = []
-        for step in steps:
-            rotation = str(step["rotation_before_macro"])
-            rotation_count = len(rotation)
-            macro_index = int(step["macro_index"])
-            if rotation_count > 0:
-                macro_plan_tokens.append(f"{rotation[0]}{rotation_count}")
-            macro_plan_tokens.append(f"M{macro_index}")
-            rings_after_macros.append(list(step["after_macro_ring"]))
-
-        entries[_key_to_str(key)] = {
-            "total_move_count": len(full_moves),
-            "full_moves": "".join(full_moves),
-            "final_first_bead": final_ring[0],
-            "macro_plan": " ".join(macro_plan_tokens),
-            "rings_after_macros": rings_after_macros,
-        }
-
-    report: dict[str, object] = {
-        "ring_size": ring_size,
-        "endgame_values": list(ENDGAME_VALUES),
-        "catalog_size": len(macros),
-        "used_macro_indices": used_indices,
-        "pruned_catalog_size": len(pruned_catalog),
-        "pruned_macro_strings": ["".join(macro) for macro in pruned_catalog],
-        "pruned_macro_expansions": [_decompose_macro_to_expansion(macro) for macro in pruned_catalog],
-        "entries": entries,
-    }
-
-    with target_path.open("w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, sort_keys=True)
-        f.write("\n")
-
-    return report
-
-
-def generate_cycle_based_table() -> dict[tuple[int, int, int, int], list[str]]:
-    """Generate a cycle-macro-based endgame table as concrete legal move lists.
-
-    This uses conjugates of sigma2/sigma3 macros, projected through canonical keying,
-    and solves on the 24-key graph with Dijkstra.
-    """
-    keys = sorted(permutations(ENDGAME_VALUES))
-    ring_size = ENDGAME_RUN_LENGTH + ENDGAME_SIZE
-    macros = _build_cycle_macro_catalog(ring_size)
-
-    neighbors: dict[
-        tuple[int, int, int, int],
-        list[tuple[tuple[int, int, int, int], list[str]]],
-    ] = {key: [] for key in keys}
-
-    for key in keys:
-        representative = _representative_ring(key)
-        candidate_by_next_key: dict[tuple[int, int, int, int], list[str]] = {}
-
-        for macro in macros:
-            moved = _apply_moves_to_ring(representative, macro)
-            try:
-                next_key = canonical_lookup_key(moved)
-            except ValueError:
-                continue
-
-            current_best = candidate_by_next_key.get(next_key)
-            if current_best is None or len(macro) < len(current_best):
-                candidate_by_next_key[next_key] = macro
-
-        neighbors[key] = [
-            (next_key, macro)
-            for next_key, macro in sorted(
-                candidate_by_next_key.items(), key=lambda item: (item[0], len(item[1]))
-            )
-        ]
-
-    target = SOLVED_ENDGAME_KEY
-    table: dict[tuple[int, int, int, int], list[str]] = {}
-    target_ring = _representative_ring(target)
-
-    for start in keys:
-        if start == target:
-            table[start] = []
-            continue
-
-        dist: dict[tuple[int, int, int, int], int] = {start: 0}
-        path: dict[tuple[int, int, int, int], list[str]] = {start: []}
-        pq: list[tuple[int, tuple[int, int, int, int]]] = [(0, start)]
-
-        found = False
-        while pq:
-            cost, node = heappop(pq)
-            if cost != dist[node]:
-                continue
-            if node == target:
-                found = True
-                break
-
-            for nxt, macro in neighbors[node]:
-                next_cost = cost + len(macro)
-                next_path = path[node] + macro
-                if (
-                    nxt not in dist
-                    or next_cost < dist[nxt]
-                    or (next_cost == dist[nxt] and next_path < path[nxt])
-                ):
-                    dist[nxt] = next_cost
-                    path[nxt] = next_path
-                    heappush(pq, (next_cost, nxt))
-
-        if not found:
-            table[start] = _truncate_useless_rotations(
-                _representative_ring(start),
-                _shortest_path_bidirectional_ring(representative, target_ring),
-            )
-            continue
-
-        table[start] = _truncate_useless_rotations(_representative_ring(start), path[target])
-
-    return table
-
-
-def generate_hybrid_endgame_table(
-    search_table: dict[tuple[int, int, int, int], list[str]],
-    cycle_table: dict[tuple[int, int, int, int], list[str]],
-) -> dict[tuple[int, int, int, int], list[str]]:
-    """Choose the shorter solution per key between search and cycle tables."""
-    if set(search_table) != set(cycle_table):
-        raise ValueError("Search and cycle tables must cover the same keys.")
-
-    hybrid: dict[tuple[int, int, int, int], list[str]] = {}
-    for key in sorted(search_table):
-        search_moves = search_table[key]
-        cycle_moves = cycle_table[key]
-        representative = _representative_ring(key)
-        search_moves = _truncate_useless_rotations(representative, search_moves)
-        cycle_moves = _truncate_useless_rotations(representative, cycle_moves)
-        if len(cycle_moves) < len(search_moves):
-            hybrid[key] = cycle_moves
-        else:
-            hybrid[key] = search_moves
-    return hybrid
-
-
-def _key_to_str(key: tuple[int, int, int, int]) -> str:
+def _key_to_str(key: Quartet) -> str:
+    """Convert a key tuple to a string for JSON serialization."""
     return ",".join(str(value) for value in key)
 
 
-def _str_to_key(raw: str) -> tuple[int, int, int, int]:
+def _str_to_key(raw: str) -> Quartet:
+    """Convert a string back to a key tuple."""
     parts = tuple(int(value) for value in raw.split(","))
     if len(parts) != ENDGAME_SIZE:
         raise ValueError(f"Invalid endgame key: {raw}")
     return parts  # type: ignore[return-value]
 
 
-def _reconstruct_bidirectional_path(
-    meeting: tuple[int, ...],
-    forward_prev: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
-    backward_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
-) -> list[str]:
-    """Reconstruct path from start to target using predecessor/next maps."""
-    moves: list[str] = []
-
-    node = meeting
-    left_half: list[str] = []
-    while True:
-        parent, move = forward_prev[node]
-        if parent is None:
-            break
-        assert move is not None
-        left_half.append(move)
-        node = parent
-    left_half.reverse()
-    moves.extend(left_half)
-
-    node = meeting
-    while True:
-        nxt, move = backward_next[node]
-        if nxt is None:
-            break
-        assert move is not None
-        moves.append(move)
-        node = nxt
-
-    return moves
-
-
 def _reconstruct_forward_path(
     meeting: tuple[int, ...],
     forward_prev: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
-) -> list[str]:
-    """Reconstruct a path from a forward start state to a meeting state."""
-    moves: list[str] = []
+) -> MoveList:
+    """Reconstruct a path from a forward start state to a meeting state.
+    
+    `forward_prev` maps each visited node in the forward search tree to its predecessor and the
+    move that led to it, except for the root which is the starting node and maps to (None, None).
+    """
+    moves: MoveList = []
     node = meeting
     while True:
         parent, move = forward_prev[node]
@@ -707,9 +228,13 @@ def _reconstruct_forward_path(
 def _reconstruct_reverse_tail(
     meeting: tuple[int, ...],
     reverse_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
-) -> list[str]:
-    """Reconstruct a path from a meeting state to the solved target state."""
-    moves: list[str] = []
+) -> MoveList:
+    """Reconstruct a path from a meeting state to the solved target state.
+    
+    `reverse_next` maps each visited node in the backward search tree to its successor and the
+    move to reach it, except for the root which is the target node and maps to (None, None).
+    """
+    moves: MoveList = []
     node = meeting
     while True:
         nxt, move = reverse_next[node]
@@ -721,102 +246,59 @@ def _reconstruct_reverse_tail(
     return moves
 
 
-def _shortest_path_bidirectional_ring(
-    start_ring: list[int],
-    target_ring: list[int],
-) -> list[str]:
-    """Find a deterministic shortest path between concrete rings via bidirectional BFS."""
-    start = tuple(start_ring)
-    target = tuple(target_ring)
-
-    if start == target:
-        return []
-
-    inverse_move = {"L": "R", "R": "L", "F": "F"}
-
-    forward_prev: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]] = {
-        start: (None, None)
-    }
-    backward_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]] = {
-        target: (None, None)
-    }
-
-    forward_frontier = {start}
-    backward_frontier = {target}
-
-    while forward_frontier and backward_frontier:
-        if len(forward_frontier) <= len(backward_frontier):
-            next_frontier: set[tuple[int, ...]] = set()
-            for node in sorted(forward_frontier):
-                node_list = list(node)
-                for move in MOVE_ORDER:
-                    nxt_list = _apply_move_to_ring(node_list, move)
-                    nxt = tuple(nxt_list)
-                    if nxt not in forward_prev:
-                        forward_prev[nxt] = (node, move)
-                        next_frontier.add(nxt)
-                    if nxt in backward_next:
-                        return _reconstruct_bidirectional_path(nxt, forward_prev, backward_next)
-            forward_frontier = next_frontier
-        else:
-            next_frontier = set()
-            for node in sorted(backward_frontier):
-                node_list = list(node)
-                for move in MOVE_ORDER:
-                    prev_list = _apply_move_to_ring(node_list, move)
-                    prev = tuple(prev_list)
-                    forward_move = inverse_move[move]
-                    if prev not in backward_next:
-                        backward_next[prev] = (node, forward_move)
-                        next_frontier.add(prev)
-                    if prev in forward_prev:
-                        return _reconstruct_bidirectional_path(prev, forward_prev, backward_next)
-            backward_frontier = next_frontier
-
-    raise RuntimeError("No path found between representative endgame rings.")
-
-
 def generate_endgame_table_interleaved(
     *,
     progress_stream: object = sys.stderr,
     log_state_interval: int = 1_000_000,
     remaining_log_threshold: int = 4,
-    max_workers: int | None = None,
-) -> dict[tuple[int, int, int, int], list[str]]:
+    n_workers: int | None = None,
+) -> dict[Quartet, MoveList]:
     """Generate table by interleaving all starts with one reverse BFS tree.
 
     This intentionally favors visibility over speed: it advances one reverse layer and
     one forward layer (for every unsolved start key) per depth, logging progress.
     """
+
+    ########################
+    # INPUT VALIDATION
+    ########################
+
     if log_state_interval < 1:
         raise ValueError("log_state_interval must be >= 1")
     if remaining_log_threshold < 0:
         raise ValueError("remaining_log_threshold must be >= 0")
-    if max_workers is not None and max_workers < 1:
-        raise ValueError("max_workers must be >= 1 when provided")
+    if n_workers is None:
+        n_workers = max(1, (os.cpu_count() or 1) - 1)
+    elif n_workers < 1:
+        raise ValueError("n_workers must be >= 1 when provided")
 
+    ########################
+    # INITIALIZATION
+    ########################
+
+    # Each permutation of ENDGAME_VALUES is a key, and we will solve for all of them simultaneously.
     keys = sorted(permutations(ENDGAME_VALUES))
-    target_ring = tuple(_representative_ring(SOLVED_ENDGAME_KEY))
 
+    # Map each move to its inverse.
     inverse_move = {"L": "R", "R": "L", "F": "F"}
 
-    reverse_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]] = {
-        target_ring: (None, None)
-    }
-    reverse_frontier: set[tuple[int, ...]] = {target_ring}
+    # List of solved starting keys and their solutions.
+    solved: dict[Quartet, MoveList] = {}
 
-    forward_prev_by_key: dict[
-        tuple[int, int, int, int],
-        dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
-    ] = {}
-    forward_frontier_by_key: dict[tuple[int, int, int, int], set[tuple[int, ...]]] = {}
-    solved: dict[tuple[int, int, int, int], list[str]] = {}
-
-    all_seen: set[tuple[int, ...]] = {target_ring}
+    # Lock for synchronizing access to `all_seen` and `total_states_seen` across threads.
     seen_lock = Lock()
-    total_states_seen = 1
-    last_logged_seen = total_states_seen
+    all_seen: set[tuple[int, ...]] = set()
+    total_states_seen = 0
+
+    # Track the number of states seen at the last logging point to determine when to log next.
+    last_logged_seen = 0
+
+    # Record the start time for logging purposes.
     started_at = monotonic()
+
+    ##############################
+    # HELPER FUNCTIONS (CLOSURES)
+    ##############################
 
     def add_seen_if_new(state: tuple[int, ...]) -> bool:
         """Atomically add a state to seen set and increment shared counter once."""
@@ -829,10 +311,12 @@ def generate_endgame_table_interleaved(
             return True
 
     def get_total_states_seen() -> int:
+        """Atomically get the total number of states seen."""
         with seen_lock:
             return total_states_seen
 
     def maybe_log(depth: int, *, force_depth: bool = False) -> None:
+        """Log progress if we've seen enough new states since the last log or if forced by depth."""
         nonlocal last_logged_seen
         seen_now = get_total_states_seen()
         if force_depth or (seen_now - last_logged_seen) >= log_state_interval:
@@ -854,19 +338,18 @@ def generate_endgame_table_interleaved(
             )
             last_logged_seen = seen_now
 
-    if max_workers is None:
-        workers = max(1, (os.cpu_count() or 1) - 1)
-    else:
-        workers = max_workers
-
-    inverse_move = {"L": "R", "R": "L", "F": "F"}
-
     def reverse_edges_for_node(
         node: tuple[int, ...], src_rank: int
     ) -> list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]]:
+        """Generate edges in the reverse direction (predecessor, move, node) for a given node.
+        
+        There are always 3 legal moves, and we apply the inverse move to get the predecessor in
+        the reverse search.
+        """
         node_list = list(node)
         edges: list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]] = []
-        for move_rank, move in enumerate(MOVE_ORDER):
+
+        for move_rank, move in enumerate(LEGAL_MOVES):
             predecessor_list = _apply_move_to_ring(node_list, inverse_move[move])
             predecessor = tuple(predecessor_list)
             edges.append((src_rank, move_rank, predecessor, node, move))
@@ -875,32 +358,82 @@ def generate_endgame_table_interleaved(
     def forward_edges_for_node(
         node: tuple[int, ...], src_rank: int
     ) -> list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]]:
+        """Generate edges in the forward direction (node, move, successor) for a given node.
+        
+        There are always 3 legal moves, and we apply them directly to get the successor in the
+        forward search.
+        """
         node_list = list(node)
         edges: list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]] = []
-        for move_rank, move in enumerate(MOVE_ORDER):
+        for move_rank, move in enumerate(LEGAL_MOVES):
             nxt_list = _apply_move_to_ring(node_list, move)
             nxt = tuple(nxt_list)
             edges.append((src_rank, move_rank, node, nxt, move))
         return edges
+    
+    #####################################################
+    # INITIALIZATION (AFTER HELPER FUNCTION DEFINITIONS)
+    #####################################################
+
+    # There is a single target node in the reverse search, which is the representative ring for the
+    # key 17, 18, 19, 20 representing the solved state.
+    target_ring = tuple(_representative_ring(ENDGAME_VALUES))
+
+    # `reverse_next` maps each visited node in the reverse search tree to its successor and the move
+    # to reach it, except for the root which is the target node and maps to (None, None).
+    reverse_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]] = {
+        target_ring: (None, None)
+    }
+
+    # `reverse_depth` maps each visited node in the reverse tree to its depth from target_ring.
+    # Needed for optimal meeting detection: at meeting, we pick min(forward_depth + reverse_depth).
+    reverse_depth: dict[tuple[int, ...], int] = {target_ring: 0}
+
+    # BFS frontier for the reverse search, initialized with the target node.
+    reverse_frontier: set[tuple[int, ...]] = {target_ring}
+
+    # For the forward searches, we have one frontier and one visited map per start key. Each visited
+    # map `forward_prev_by_key[key]` maps visited nodes to their predecessor and the move that led
+    # to them, except for the root which is the starting node and maps to (None, None).
+    forward_prev_by_key: dict[
+        Quartet,
+        dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
+    ] = {}
+    forward_frontier_by_key: dict[Quartet, set[tuple[int, ...]]] = {}
+    # `forward_depth_by_key[key]` maps each visited node to its depth from the starting key.
+    # Used for optimal meeting detection during interleaved BFS.
+    forward_depth_by_key: dict[Quartet, dict[tuple[int, ...], int]] = {}
+
+    # Seed the seen-state bookkeeping with the target state now that the target ring exists.
+    all_seen.add(target_ring)
+    total_states_seen = 1
+    last_logged_seen = total_states_seen
 
     for key in keys:
         start = tuple(_representative_ring(key))
         forward_prev_by_key[key] = {start: (None, None)}
+        forward_depth_by_key[key] = {start: 0}
         forward_frontier_by_key[key] = {start}
         add_seen_if_new(start)
 
         if start in reverse_next:
             solved[key] = []
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    #############################
+    # PARALLEL INTERLEAVED SEARCH
+    #############################
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
         depth = 0
         while len(solved) < len(keys):
             depth += 1
 
+            # Initialize the next frontier for the reverse search layer,
             next_reverse_frontier: set[tuple[int, ...]] = set()
             sorted_reverse_frontier = sorted(reverse_frontier)
 
-            if workers > 1 and len(sorted_reverse_frontier) > 1:
+            # Generate edges for the reverse frontier, using parallelism if enabled and the
+            # frontier is large enough to benefit from it.
+            if n_workers > 1 and len(sorted_reverse_frontier) > 1:
                 reverse_futures = [
                     executor.submit(reverse_edges_for_node, node, src_rank)
                     for src_rank, node in enumerate(sorted_reverse_frontier)
@@ -913,29 +446,49 @@ def generate_endgame_table_interleaved(
                     for edge in reverse_edges_for_node(node, src_rank)
                 ]
 
+            # Sort edges by source rank and then move rank for deterministic processing order,
+            # which affects tie-breaking when we check for meetings in the forward search.
             reverse_edges.sort(key=lambda item: (item[0], item[1]))
+
+            # Process reverse edges to build the next frontier and update `reverse_next`. We also
+            # add to the shared seen set and maybe log progress as we go.
             for _, _, predecessor, node, move in reverse_edges:
                 if predecessor in reverse_next:
                     continue
 
                 reverse_next[predecessor] = (node, move)
+                reverse_depth[predecessor] = reverse_depth[node] + 1
                 next_reverse_frontier.add(predecessor)
                 if add_seen_if_new(predecessor):
                     maybe_log(depth)
 
+            # Move the next reverse frontier into place for the next iteration of the loop.
             reverse_frontier = next_reverse_frontier
 
+            # For each unsolved start key:
             for key in keys:
+
+                # If this key is already solved, skip it.
                 if key in solved:
                     continue
 
+                # Get the current frontier and visited map for this key's forward search.
                 prev_map = forward_prev_by_key[key]
                 frontier = forward_frontier_by_key[key]
-                next_frontier: set[tuple[int, ...]] = set()
-                found_meeting: tuple[int, ...] | None = None
-
                 sorted_frontier = sorted(frontier)
-                if workers > 1 and len(sorted_frontier) > 1:
+
+                # Initialize the next frontier for the forward search layer.
+                next_frontier: set[tuple[int, ...]] = set()
+
+                # Best meeting found at this forward layer: (node, total_cost) where
+                # total_cost = forward_depth + reverse_depth. We collect all meetings at this layer
+                # and pick the best, ensuring true bidirectional BFS optimality.
+                best_meeting: tuple[int, ...] | None = None
+                best_meeting_cost = float('inf')
+
+                # Generate edges for the forward frontier, using parallelism if enabled and the
+                # frontier is large enough to benefit from it.
+                if n_workers > 1 and len(sorted_frontier) > 1:
                     forward_futures = [
                         executor.submit(forward_edges_for_node, node, src_rank)
                         for src_rank, node in enumerate(sorted_frontier)
@@ -948,21 +501,36 @@ def generate_endgame_table_interleaved(
                         for edge in forward_edges_for_node(node, src_rank)
                     ]
 
+                # Sort edges by source rank and then move rank for deterministic processing order,
+                # which affects tie-breaking when we check for meetings.
                 forward_edges.sort(key=lambda item: (item[0], item[1]))
+
+                # For each edge in the forward search, if it leads to an unseen node, add it to the
+                # next frontier and update the visited map. If the node is already in the reverse
+                # visited map, it is a potential meeting point. We collect all meetings at this
+                # layer and pick the one with minimum forward_depth + reverse_depth.
                 for _, _, node, nxt, move in forward_edges:
                     if nxt not in prev_map:
                         prev_map[nxt] = (node, move)
+                        forward_depth_by_key[key][nxt] = forward_depth_by_key[key][node] + 1
                         next_frontier.add(nxt)
                         if add_seen_if_new(nxt):
                             maybe_log(depth)
 
                     if nxt in reverse_next:
-                        found_meeting = nxt
-                        break
+                        # Meeting found: record if it is the best at this layer.
+                        forward_d = forward_depth_by_key[key][nxt]
+                        reverse_d = reverse_depth[nxt]
+                        total_cost = forward_d + reverse_d
+                        if total_cost < best_meeting_cost:
+                            best_meeting_cost = total_cost
+                            best_meeting = nxt
 
-                if found_meeting is not None:
-                    prefix = _reconstruct_forward_path(found_meeting, prev_map)
-                    suffix = _reconstruct_reverse_tail(found_meeting, reverse_next)
+                # If we found a meeting at this layer, use the best one (by total cost) and record
+                # it as the solution for this key, which is then removed from the forward BFS.
+                if best_meeting is not None:
+                    prefix = _reconstruct_forward_path(best_meeting, prev_map)
+                    suffix = _reconstruct_reverse_tail(best_meeting, reverse_next)
                     solved[key] = _truncate_useless_rotations(
                         _representative_ring(key), prefix + suffix
                     )
@@ -973,6 +541,9 @@ def generate_endgame_table_interleaved(
             # Always emit at least one line for each completed depth.
             maybe_log(depth, force_depth=True)
 
+            # If the reverse frontier and all forward frontiers for unsolved keys are empty, then
+            # we are stalled and cannot make further progress. This should not happen in a solvable
+            # search space; in any case, raise an error.
             if not reverse_frontier and all(
                 not forward_frontier_by_key[key] for key in keys if key not in solved
             ):
@@ -982,21 +553,22 @@ def generate_endgame_table_interleaved(
     return solved
 
 
-def generate_endgame_table() -> dict[tuple[int, int, int, int], list[str]]:
-    """Generate a hybrid endgame table from search and cycle-based constructions."""
-    search_table = generate_endgame_table_interleaved()
-    cycle_table = generate_cycle_based_table()
-    return generate_hybrid_endgame_table(search_table, cycle_table)
+def generate_endgame_table() -> dict[Quartet, MoveList]:
+    """Generate the endgame table using optimal interleaved bidirectional BFS.
+    
+    Returns the shortest solution for each endgame key.
+    """
+    return generate_endgame_table_interleaved()
 
 
-def validate_endgame_table(table: dict[tuple[int, int, int, int], list[str]]) -> None:
-    """Validate that the table matches the current bidirectional-BFS generator."""
+def validate_endgame_table(table: dict[Quartet, MoveList]) -> None:
+    """Validate that the table matches the current endgame table generator."""
     regenerated = generate_endgame_table()
     if table != regenerated:
-        raise ValueError("Loaded endgame table does not match generated bidirectional-BFS table.")
+        raise ValueError("Loaded endgame table does not match generated endgame table.")
 
 
-def load_endgame_table(validate: bool = True) -> dict[tuple[int, int, int, int], list[str]]:
+def load_endgame_table(validate: bool = True) -> dict[Quartet, MoveList]:
     """Load the precomputed endgame table from JSON.
 
     If the JSON is missing, generate it on the fly so solver usage stays functional.
@@ -1008,7 +580,7 @@ def load_endgame_table(validate: bool = True) -> dict[tuple[int, int, int, int],
 
     if _TABLE_PATH.exists():
         with _TABLE_PATH.open("r", encoding="utf-8") as f:
-            raw: dict[str, list[str]] = json.load(f)
+            raw: dict[str, MoveList] = json.load(f)
         table = {_str_to_key(key): moves for key, moves in raw.items()}
     else:
         table = generate_endgame_table()
@@ -1020,7 +592,7 @@ def load_endgame_table(validate: bool = True) -> dict[tuple[int, int, int, int],
     return table
 
 
-def write_endgame_table(path: Path | None = None) -> dict[tuple[int, int, int, int], list[str]]:
+def write_endgame_table(path: Path | None = None) -> dict[Quartet, MoveList]:
     """Generate and write the hybrid canonical endgame table as JSON."""
     target_path = _TABLE_PATH if path is None else path
     table = generate_endgame_table()
@@ -1035,28 +607,10 @@ def write_endgame_table(path: Path | None = None) -> dict[tuple[int, int, int, i
 
 def main() -> int:
     """CLI entrypoint for manually running long endgame table generation."""
-    report = generate_macro_analysis_report()
-    print(
-        "Wrote macro analysis report to "
-        f"{_MACRO_REPORT_PATH} "
-        f"(catalog={report['catalog_size']}, pruned={report['pruned_catalog_size']})."
-    )
-
     table = write_endgame_table()
-    print(f"Wrote hybrid table to {_TABLE_PATH} with {len(table)} entries.")
+    print(f"Wrote endgame table to {_TABLE_PATH} with {len(table)} entries.")
     print(f"Max path length: {max(len(path) for path in table.values())}")
     print(f"Min path length: {min(len(path) for path in table.values())}")
-    return 0
-
-
-def main_macro_report() -> int:
-    """CLI entrypoint for macro analysis only (no table generation)."""
-    report = generate_macro_analysis_report()
-    print(
-        "Wrote macro analysis report to "
-        f"{_MACRO_REPORT_PATH} "
-        f"(catalog={report['catalog_size']}, pruned={report['pruned_catalog_size']})."
-    )
     return 0
 
 
@@ -1064,7 +618,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-def lookup_endgame_moves(ring: list[int]) -> list[str]:
+def lookup_endgame_moves(ring: list[int]) -> MoveList:
     """Lookup canonical endgame moves for a live ring.
     
     Validates that the returned moves actually solve the ring without checking
