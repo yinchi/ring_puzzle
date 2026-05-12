@@ -562,10 +562,19 @@ def generate_endgame_table() -> dict[Quartet, MoveList]:
 
 
 def validate_endgame_table(table: dict[Quartet, MoveList]) -> None:
-    """Validate that the table matches the current endgame table generator."""
-    regenerated = generate_endgame_table()
-    if table != regenerated:
-        raise ValueError("Loaded endgame table does not match generated endgame table.")
+    """Validate that all solutions in the table actually solve their keys.
+    
+    This checks validity (solutions work) but not optimality (they may not be shortest).
+    """
+    for key, moves in table.items():
+        start_ring = _representative_ring(key)
+        result_ring = _apply_moves_to_ring(start_ring, moves)
+        _, run_length, _ = get_max_run(result_ring)
+        if run_length != len(result_ring):
+            raise ValueError(
+                f"Invalid solution for key {key}: moves {moves} result in run_length {run_length}, "
+                f"not {len(result_ring)}"
+            )
 
 
 def load_endgame_table(validate: bool = True) -> dict[Quartet, MoveList]:
@@ -625,7 +634,7 @@ def lookup_endgame_moves(ring: list[int]) -> MoveList:
     for optimality (which would require expensive table regeneration).
     """
     key = canonical_lookup_key(ring)
-    table = load_endgame_table(validate=False)
+    table = load_endgame_table(validate=True)
     moves = table[key][:]
     
     # Quick validation: apply moves and check the ring is solved

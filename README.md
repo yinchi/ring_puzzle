@@ -73,13 +73,6 @@ The likely use for normalization is only at the endgame boundary: canonicalize e
 so one table can cover all rotationally equivalent cases. In other words, normalization should be
 an internal solver representation choice, not a user-visible action.
 
-## Notes
-
-- The auto-solver is not implemented yet.
-- The current UI supports manual play only.
-- The project is intentionally small and experimental while the solver strategy is being worked
-	out.
-
 ## Reference
 
 For a mathematical and puzzle-oriented discussion of the same puzzle family, see Jamie
