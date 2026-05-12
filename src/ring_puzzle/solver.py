@@ -30,10 +30,16 @@ For N=3 the shift costs 1 move (F); for N=2, 4 moves; for N=1, 5 moves.
 """
 
 from .endgame import solve_endgame
-from .shifts import (shift_left1, shift_left2, shift_left3, shift_right1,
-                     shift_right2, shift_right3)
-from .util import (ENDGAME_RUN_LENGTH, FLIP_SIZE, MoveList, RingState,
-                   get_max_run, is_solved, rotate_shortest)
+from .shifts import shift_left1, shift_left2, shift_left3, shift_right1, shift_right2, shift_right3
+from .util import (
+    ENDGAME_RUN_LENGTH,
+    FLIP_SIZE,
+    MoveList,
+    RingState,
+    get_max_run,
+    is_solved,
+    rotate_shortest,
+)
 
 
 def extend_tail(state: RingState) -> RingState:
@@ -66,9 +72,7 @@ def extend_tail(state: RingState) -> RingState:
     run_head_val = state.ring[start_index]
     run_tail_val = ((run_head_val + original_run_length - 2) % ring_size) + 1
     next_consecutive = (run_tail_val % ring_size) + 1  # locked target bead (tail)
-    pred_val = (
-        (run_head_val - 2) % ring_size
-    ) + 1  # used to detect head-grew side-effect
+    pred_val = ((run_head_val - 2) % ring_size) + 1  # used to detect head-grew side-effect
     unsolved_length = ring_size - original_run_length
 
     while True:
@@ -130,9 +134,7 @@ def extend_head(state: RingState) -> RingState:
     run_head_val = state.ring[start_index]
     pred_val = ((run_head_val - 2) % ring_size) + 1  # locked predecessor to add at head
     run_tail_val = ((run_head_val + original_run_length - 2) % ring_size) + 1
-    tail_next_val = (
-        run_tail_val % ring_size
-    ) + 1  # used to detect tail-grew side-effect
+    tail_next_val = (run_tail_val % ring_size) + 1  # used to detect tail-grew side-effect
     unsolved_length = ring_size - original_run_length
 
     while True:
@@ -199,16 +201,8 @@ def _two_ended_extend(state: RingState) -> RingState:
     if tail_state is None and head_state is None:
         raise ValueError("Cannot extend the run at either end.")
 
-    tail_cost = (
-        len(tail_state.moves) - len(state.moves)
-        if tail_state is not None
-        else float("inf")
-    )
-    head_cost = (
-        len(head_state.moves) - len(state.moves)
-        if head_state is not None
-        else float("inf")
-    )
+    tail_cost = len(tail_state.moves) - len(state.moves) if tail_state is not None else float("inf")
+    head_cost = len(head_state.moves) - len(state.moves) if head_state is not None else float("inf")
 
     if tail_cost <= head_cost:
         assert tail_state is not None
@@ -253,8 +247,7 @@ def cancel_opposite_rotations(moves: MoveList) -> MoveList:
     i = 0
     while i < len(moves):
         if i < len(moves) - 1 and (
-            (moves[i] == "L" and moves[i + 1] == "R")
-            or (moves[i] == "R" and moves[i + 1] == "L")
+            (moves[i] == "L" and moves[i + 1] == "R") or (moves[i] == "R" and moves[i + 1] == "L")
         ):
             # Skip both moves (they cancel)
             i += 2

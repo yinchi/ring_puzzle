@@ -12,11 +12,7 @@ import time
 import pytest
 
 from ring_puzzle import is_solved
-from ring_puzzle.solver import (
-    cancel_opposite_rotations,
-    solve_from_state,
-    solve_moves,
-)
+from ring_puzzle.solver import cancel_opposite_rotations, solve_from_state, solve_moves
 from ring_puzzle.util import RingState
 
 
@@ -239,4 +235,3 @@ class TestWorstCasePerformance:
         assert len(moves) <= 217, (
             f"Empirical worst case regressed: {len(moves)} moves (expected <= 217)"
         )
-

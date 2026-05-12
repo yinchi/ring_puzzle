@@ -18,6 +18,16 @@ labels), then physically rotated so the run occupies positions 0..15. The
 
 Table entries require between 0 and 44 moves. The hardest endgame key is
 (18, 20, 17, 19), which requires 44 moves.
+
+Table generation
+-----------------
+`uv run endgame` generates the table by interleaving a single reverse BFS from the solved state
+with 24 forward BFSs from each of the unsolved keys, until all keys are solved. The solutions
+are saved to `endgame.json`.
+
+Free-threaded Python is required to use multiple workers for parallel edge generation, thus
+requiring Python 3.13+. The default is to use all but one CPU core, but this can be configured
+with the N_WORKERS environment variable.
 """
 
 from __future__ import annotations
@@ -32,8 +42,17 @@ from threading import Lock
 from time import monotonic
 from typing import TextIO
 
-from .util import (ENDGAME_RUN_LENGTH, FLIP_SIZE, MoveList, Quartet, RingState,
-                   get_max_run, is_solved, normalize, rotate_shortest)
+from .util import (
+    ENDGAME_RUN_LENGTH,
+    FLIP_SIZE,
+    MoveList,
+    Quartet,
+    RingState,
+    get_max_run,
+    is_solved,
+    normalize,
+    rotate_shortest,
+)
 
 # Cannot use our early-game solver once the protected run is length 16, so we need a separate
 # endgame table keyed by the 4 flipping beads.
@@ -135,9 +154,7 @@ def canonical_lookup_key(ring: list[int]) -> Quartet:
     prefix = tuple(anchored[:ENDGAME_RUN_LENGTH])
     expected_prefix = tuple(range(1, ENDGAME_RUN_LENGTH + 1))
     if prefix != expected_prefix:
-        raise ValueError(
-            f"Canonical endgame view does not fix positions 1..{ENDGAME_RUN_LENGTH}."
-        )
+        raise ValueError(f"Canonical endgame view does not fix positions 1..{ENDGAME_RUN_LENGTH}.")
 
     suffix = tuple(anchored[ENDGAME_RUN_LENGTH : ENDGAME_RUN_LENGTH + ENDGAME_SIZE])
     if set(suffix) != set(ENDGAME_VALUES):
@@ -260,7 +277,6 @@ def generate_endgame_table_interleaved(
     This intentionally favors visibility over speed: it advances one reverse layer and
     one forward layer (for every unsolved start key) per depth, logging progress.
     """
-
     ########################
     # INPUT VALIDATION
     ########################
@@ -440,9 +456,7 @@ def generate_endgame_table_interleaved(
                     executor.submit(reverse_edges_for_node, node, src_rank)
                     for src_rank, node in enumerate(sorted_reverse_frontier)
                 ]
-                reverse_edges = [
-                    edge for fut in reverse_futures for edge in fut.result()
-                ]
+                reverse_edges = [edge for fut in reverse_futures for edge in fut.result()]
             else:
                 reverse_edges = [
                     edge
@@ -496,9 +510,7 @@ def generate_endgame_table_interleaved(
                         executor.submit(forward_edges_for_node, node, src_rank)
                         for src_rank, node in enumerate(sorted_frontier)
                     ]
-                    forward_edges = [
-                        edge for fut in forward_futures for edge in fut.result()
-                    ]
+                    forward_edges = [edge for fut in forward_futures for edge in fut.result()]
                 else:
                     forward_edges = [
                         edge
@@ -517,9 +529,7 @@ def generate_endgame_table_interleaved(
                 for _, _, node, nxt, move in forward_edges:
                     if nxt not in prev_map:
                         prev_map[nxt] = (node, move)
-                        forward_depth_by_key[key][nxt] = (
-                            forward_depth_by_key[key][node] + 1
-                        )
+                        forward_depth_by_key[key][nxt] = forward_depth_by_key[key][node] + 1
                         next_frontier.add(nxt)
                         if add_seen_if_new(nxt):
                             maybe_log(depth)
@@ -567,7 +577,17 @@ def generate_endgame_table() -> dict[Quartet, MoveList]:
 
     Returns the shortest solution for each endgame key.
     """
-    return generate_endgame_table_interleaved()
+    n_workers = os.getenv("N_WORKERS")
+    if n_workers is not None:
+        n_workers = int(n_workers)
+    else:
+        n_workers = (os.cpu_count() or 1) - 1
+
+    # If n_workers (supplied or computed) is less than 1, default to 1 to avoid invalid thread
+    # pool size.
+    n_workers = max(n_workers, 1)
+
+    return generate_endgame_table_interleaved(n_workers=n_workers)
 
 
 def validate_endgame_table(table: dict[Quartet, MoveList]) -> None:
@@ -652,8 +672,6 @@ def lookup_endgame_moves(ring: list[int]) -> MoveList:
         test_ring = _apply_move_to_ring(test_ring, move)
 
     # Verify the result is solved (all beads in consecutive order, possibly rotated)
-    from .solver import get_max_run
-
     _, run_length, _ = get_max_run(test_ring)
     if run_length != len(test_ring):
         raise RuntimeError(
@@ -684,8 +702,6 @@ def solve_endgame(state: RingState) -> RingState:
 
     final_length = get_max_run(state.ring)[1]
     if final_length != len(state.ring):
-        raise RuntimeError(
-            "Endgame move translation failed to solve the ring up to rotation."
-        )
+        raise RuntimeError("Endgame move translation failed to solve the ring up to rotation.")
 
     return state

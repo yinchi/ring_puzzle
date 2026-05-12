@@ -31,8 +31,7 @@ type Quartet = tuple[int, int, int, int]
 def is_solved(ring: list[int]) -> bool:
     """Check if the ring is in a solved state, allowing for any rotation."""
     return any(
-        ring == SOLVED_RING[offset:] + SOLVED_RING[:offset]
-        for offset in range(len(SOLVED_RING))
+        ring == SOLVED_RING[offset:] + SOLVED_RING[:offset] for offset in range(len(SOLVED_RING))
     )
 
 
@@ -107,20 +106,21 @@ def normalize(ring: list[int]) -> list[int]:
     """Normalize the ring.
 
     Normalization shifts all bead labels modulo 20 so that the longest run of consecutive
-    numbers starts at 1."""
-
+    numbers starts at 1.
+    """
     max_run_start, _, _ = get_max_run(ring)
 
     # Shift labels in 1-based modular arithmetic so the run starts at bead 1.
     offset = 1 - ring[max_run_start]
 
-    # Shift all bead labels by the calculated offset.
-    normalized_ring = [((bead + offset - 1) % RING_SIZE) + 1 for bead in ring]
-    return normalized_ring
+    # Normalize: Shift all bead labels by the calculated offset.
+    return [((bead + offset - 1) % RING_SIZE) + 1 for bead in ring]
 
 
 @dataclass
 class RingState:
+    """The state of the ring puzzle at any point in the solution process."""
+
     ring: list[int]
     """Current configuration of the ring after moves applied"""
     offset: int = field(default=0)

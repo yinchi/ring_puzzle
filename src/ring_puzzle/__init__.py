@@ -1,3 +1,8 @@
+"""Main module for the ring puzzle game, including the curses-based UI and game loop.
+
+See README.md for an overview of the puzzle and how to play.
+"""
+
 import curses
 import random
 
@@ -71,9 +76,7 @@ def _draw(
     )
 
     base = f"{moves} moves, {flips} flips"
-    auto_suffix = (
-        f" (auto: {auto_moves} moves, {auto_flips} flips)" if auto_moves else ""
-    )
+    auto_suffix = f" (auto: {auto_moves} moves, {auto_flips} flips)" if auto_moves else ""
     if solved:
         stdscr.addstr(
             ring_row + 7,
@@ -88,9 +91,7 @@ def _draw(
         if autosolving:
             stdscr.addstr(ring_row + 7, PAD_LEFT, status)
         else:
-            stdscr.addstr(
-                ring_row + 7, PAD_LEFT, f"{status}\n{' ' * PAD_LEFT}{_LEGEND}"
-            )
+            stdscr.addstr(ring_row + 7, PAD_LEFT, f"{status}\n{' ' * PAD_LEFT}{_LEGEND}")
 
     stdscr.refresh()
 
@@ -132,7 +133,7 @@ def program(stdscr: curses.window) -> None:
         key = stdscr.getch()
         if key == ord("q"):
             break
-        elif key == curses.KEY_LEFT and not solved:
+        if key == curses.KEY_LEFT and not solved:
             ring = ring[1:] + ring[:1]
             moves += 1
         elif key == curses.KEY_RIGHT and not solved:

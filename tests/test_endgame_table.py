@@ -1,20 +1,15 @@
 """Tests for the generated endgame solution table."""
 
-import json
 from itertools import permutations
-from pathlib import Path
 
+from ring_puzzle import is_solved
 from ring_puzzle.endgame import (
-    ENDGAME_RUN_LENGTH,
-    ENDGAME_SIZE,
+    _TABLE_PATH,
     ENDGAME_VALUES,
     _apply_moves_to_ring,
     _representative_ring,
-    _str_to_key,
     load_endgame_table,
-    _TABLE_PATH,
 )
-from ring_puzzle import is_solved
 
 
 class TestEndgameTableFile:
@@ -22,9 +17,9 @@ class TestEndgameTableFile:
 
     def test_endgame_json_exists(self) -> None:
         """The endgame.json file should exist."""
-        assert (
-            _TABLE_PATH.exists()
-        ), f"endgame.json not found at {_TABLE_PATH} (absolute: {_TABLE_PATH.resolve()})"
+        assert _TABLE_PATH.exists(), (
+            f"endgame.json not found at {_TABLE_PATH} (absolute: {_TABLE_PATH.resolve()})"
+        )
 
     def test_endgame_json_has_24_entries(self) -> None:
         """The endgame table should have exactly 24 entries (all permutations of ENDGAME_VALUES)."""
@@ -36,9 +31,7 @@ class TestEndgameTableFile:
         table = load_endgame_table(validate=False)
         expected_keys = set(permutations(ENDGAME_VALUES))
         actual_keys = set(table.keys())
-        assert (
-            actual_keys == expected_keys
-        ), f"Table keys do not match expected permutations"
+        assert actual_keys == expected_keys, "Table keys do not match expected permutations"
 
 
 class TestEndgameSolutions:
@@ -82,9 +75,7 @@ class TestEndgameSolutions:
         """The solved key (17, 18, 19, 20) should require 0 moves."""
         table = load_endgame_table(validate=False)
         solved_key = ENDGAME_VALUES
-        assert (
-            solved_key in table
-        ), f"Solved key {solved_key} not in table"
+        assert solved_key in table, f"Solved key {solved_key} not in table"
         assert table[solved_key] == [], (
             f"Solved key should have 0 moves, got {len(table[solved_key])}"
         )
@@ -102,11 +93,9 @@ class TestEndgameSolutionStatistics:
         max_length = max(lengths)
 
         # The solved key has 0 moves, others should have > 0
-        assert min_length == 0, f"Minimum solution length should be 0 (for solved key)"
+        assert min_length == 0, "Minimum solution length should be 0 (for solved key)"
         # Maximum should be well under 100 moves for a 24-bead ring
-        assert (
-            max_length <= 100
-        ), f"Maximum solution length {max_length} seems unreasonably high"
+        assert max_length <= 100, f"Maximum solution length {max_length} seems unreasonably high"
 
     def test_all_solutions_use_valid_moves(self) -> None:
         """All moves in all solutions should be valid (L, R, or F)."""
@@ -119,9 +108,7 @@ class TestEndgameSolutionStatistics:
                 if move not in valid_moves:
                     invalid_count += 1
 
-        assert invalid_count == 0, (
-            f"Found {invalid_count} invalid moves (not in {valid_moves})"
-        )
+        assert invalid_count == 0, f"Found {invalid_count} invalid moves (not in {valid_moves})"
 
     def test_solution_lengths_distribution(self) -> None:
         """Check that solution lengths follow a reasonable distribution."""
@@ -141,6 +128,4 @@ class TestEndgameSolutionStatistics:
         assert 10 <= avg_len <= 50, (
             f"Average solution length {avg_len} seems outside expected range [10, 50]"
         )
-        assert max_len <= 100, (
-            f"Maximum solution length {max_len} exceeds reasonable bound of 100"
-        )
+        assert max_len <= 100, f"Maximum solution length {max_len} exceeds reasonable bound of 100"

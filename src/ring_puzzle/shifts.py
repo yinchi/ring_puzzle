@@ -45,9 +45,7 @@ def shift_left2(state: RingState) -> RingState:
     new_ring = state.ring[:]
     for new_pos, old_pos in enumerate([2, 3, 4, 0, 1]):
         new_ring[new_pos] = state.ring[old_pos]
-    return RingState(
-        ring=new_ring, offset=state.offset, moves=state.moves + ["L", "F", "R", "F"]
-    )
+    return RingState(ring=new_ring, offset=state.offset, moves=state.moves + ["L", "F", "R", "F"])
 
 
 def shift_left1(state: RingState) -> RingState:
@@ -116,9 +114,7 @@ def shift_right2(state: RingState) -> RingState:
     new_ring[2] = state.ring[0]
     new_ring[3] = state.ring[1]
     new_ring[-1] = state.ring[2]
-    return RingState(
-        ring=new_ring, offset=state.offset, moves=state.moves + ["R", "F", "L", "F"]
-    )
+    return RingState(ring=new_ring, offset=state.offset, moves=state.moves + ["R", "F", "L", "F"])
 
 
 def shift_right1(state: RingState) -> RingState:

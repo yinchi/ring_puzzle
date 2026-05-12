@@ -1,22 +1,44 @@
 [project]
 name = "ring-puzzle"
 version = "0.1.0"
-description = "Add your description here"
+description = "Terminal implementation of the 20-bead oval track (Top Spin) puzzle and solver."
+license = {file = "LICENSE"}
+keywords = ["puzzle", "game", "curses"]
+classifiers = [
+    "Environment :: Console :: Curses",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading",
+    "Topic :: Games/Entertainment :: Puzzle Games",
+]
 readme = "README.md"
 authors = [
     { name = "Yin-Chi Chan", email = "yinchichan@pm.me" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = []
 
 [project.scripts]
 ring = "ring_puzzle:main"
 endgame = "ring_puzzle.endgame:main"
-endgame-macros = "ring_puzzle.endgame:main_macro_report"
+
+[project.urls]
+"Homepage" = "https://yinchi.github.io/ring-puzzle/"
+"Repository" = "https://github.com/yinchi/ring-puzzle.git"
+
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.tox]
+env_list = ["py313t", "py314t", "py313", "py314"]
+
+[tool.tox.env_run_base]
+runner = "uv-venv-lock-runner"
+commands = [["pytest", "{posargs}"]]
 
 [dependency-groups]
 dev = [
@@ -24,4 +46,14 @@ dev = [
     "mypy>=2.1.0",
     "pytest>=9.0.3",
     "ruff>=0.15.12",
+    "tox-uv>=1.35.2",
+    "vermin>=1.8.0",
 ]
+
+[tool.isort]
+filter_files=true
+line_length=100
+# Match ruff --format settings
+multi_line_output = 3
+include_trailing_comma = true
+

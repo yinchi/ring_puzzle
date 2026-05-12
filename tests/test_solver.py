@@ -1,3 +1,5 @@
+"""Tests for the solver module, which implements the main logic for solving the ring puzzle."""
+
 import pytest
 
 from ring_puzzle.solver import (
@@ -22,7 +24,7 @@ from ring_puzzle.util import (
 
 def apply_moves(ring: list[int], moves: list[str]) -> list[int]:
     """Helper function to apply a sequence of moves to a ring state, for testing purposes.
-    
+
     Args:
         ring: The initial state of the ring.
         moves: A list of moves to apply to the ring.
@@ -45,7 +47,8 @@ def apply_moves(ring: list[int], moves: list[str]) -> list[int]:
 
 def test_normalize_maps_rotated_solution_to_canonical_order() -> None:
     """Test that the normalize function correctly identifies a rotated solution as equivalent
-    to the canonical solved state."""
+    to the canonical solved state.
+    """
     rotated = list(range(8, 21)) + list(range(1, 8))
 
     assert normalize(rotated) == list(range(1, 21))
@@ -54,7 +57,7 @@ def test_normalize_maps_rotated_solution_to_canonical_order() -> None:
 def test_get_max_run_handles_cyclic_solution() -> None:
     """Test that get_max_run correctly identifies the longest run in a ring that is a rotated
     version of the solved state.
-    
+
     In this case, the longest run should be the entire ring, even though it wraps around the end.
     """
     rotated = list(range(8, 21)) + list(range(1, 8))
@@ -65,7 +68,7 @@ def test_get_max_run_handles_cyclic_solution() -> None:
 def test_get_max_run_reports_expected_distance_for_partial_run() -> None:
     """Test that get_max_run correctly identifies the longest run and the distance to the
     next element.
-    
+
     Here the longest run is [1, 2] (position 0, length 2), and the next element (3) has distance 3
     from (2).
     """
@@ -76,7 +79,8 @@ def test_get_max_run_reports_expected_distance_for_partial_run() -> None:
 
 def test_rotate_left_and_right_are_inverses() -> None:
     """Test that rotating left and then right (or vice versa) restores the original ring state,
-    and that the moves are recorded correctly."""
+    and that the moves are recorded correctly.
+    """
     original = RingState(ring=[1, 2, 3, 4, 5])
 
     rotated = rotate_left(original, 2)
@@ -88,7 +92,8 @@ def test_rotate_left_and_right_are_inverses() -> None:
 
 def test_rotate_shortest_prefers_right_when_shorter() -> None:
     """Test that rotate_shortest chooses the right rotation when it results in fewer moves than
-    the left rotation."""
+    the left rotation.
+    """
     state = RingState(ring=[1, 2, 3, 4, 5])
 
     rotated = rotate_shortest(state, 4)
@@ -109,7 +114,8 @@ def test_shift_left_macros_match_documented_permutations(
     macro, ring: list[int], expected: list[int], moves: list[str]
 ) -> None:
     """Test that the shift_left macros produce the expected permutations and record the
-    correct moves."""
+    correct moves.
+    """
     result = macro(RingState(ring=ring, offset=7, moves=["L"]))
 
     assert result.ring == expected
@@ -130,7 +136,8 @@ def test_extend_max_run_increases_longest_run_and_records_replayable_moves(
     ring: list[int],
 ) -> None:
     """Test that extend_max_run increases the length of the longest run and records moves that can
-    be applied to the original ring to achieve the new state."""
+    be applied to the original ring to achieve the new state.
+    """
     before_start, before_length, _ = get_max_run(ring)
 
     result = extend_tail(RingState(ring=ring))
@@ -143,7 +150,8 @@ def test_extend_max_run_increases_longest_run_and_records_replayable_moves(
 
 def test_extend_max_run_raises_on_solved_ring() -> None:
     """Test that extend_max_run raises a ValueError when the input ring is already in a solved
-    state, since no moves are needed."""
+    state, since no moves are needed.
+    """
     solved = RingState(ring=list(range(1, 21)))
 
     with pytest.raises(ValueError, match="already solved"):
@@ -152,7 +160,8 @@ def test_extend_max_run_raises_on_solved_ring() -> None:
 
 def test_extend_max_run_raises_when_endgame_strategy_is_needed() -> None:
     """Test that extend_max_run raises a ValueError when the input ring requires a different
-    strategy, indicating that the endgame strategy is needed."""
+    strategy, indicating that the endgame strategy is needed.
+    """
     ring = list(range(1, 17)) + [18, 17, 19, 20]
 
     with pytest.raises(ValueError, match="different strategy"):
@@ -171,7 +180,8 @@ def test_shift_right_macros_match_documented_permutations(
     macro, ring: list[int], expected: list[int], moves: list[str]
 ) -> None:
     """Test that the shift_right macros produce the expected permutations and record the
-    correct moves."""
+    correct moves.
+    """
     result = macro(RingState(ring=ring, offset=7, moves=["L"]))
 
     assert result.ring == expected
@@ -195,7 +205,8 @@ def test_extend_head_increases_longest_run_and_records_replayable_moves(
     ring: list[int],
 ) -> None:
     """Test that extend_head increases the length of the longest run by one (at the head)
-    and records moves that can be replayed on the original ring."""
+    and records moves that can be replayed on the original ring.
+    """
     _, before_length, _ = get_max_run(ring)
 
     result = extend_head(RingState(ring=ring))
