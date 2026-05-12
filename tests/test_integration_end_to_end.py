@@ -11,13 +11,13 @@ import time
 
 import pytest
 
+from ring_puzzle import is_solved
 from ring_puzzle.solver import (
-    RingState,
     cancel_opposite_rotations,
-    get_max_run,
     solve_from_state,
     solve_moves,
 )
+from ring_puzzle.util import RingState
 
 
 def apply_moves_to_ring(ring: list[int], moves: list[str]) -> list[int]:
@@ -105,13 +105,11 @@ class TestSolverStateTracking:
 
     def test_solved_state_is_recognized(self) -> None:
         solved = list(range(1, 21))
-        _, run_length, _ = get_max_run(solved)
-        assert run_length == 20
+        assert is_solved(solved)
 
     def test_rotation_of_solved_state_is_recognized(self) -> None:
         rotated = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-        _, run_length, _ = get_max_run(rotated)
-        assert run_length == 20
+        assert is_solved(rotated)
 
 
 class TestFullSolve:
@@ -132,8 +130,7 @@ class TestFullSolve:
         moves = solve_moves(scrambled)
         result = apply_moves_to_ring(scrambled, moves)
         solved = list(range(1, 21))
-        _, run_length, _ = get_max_run(result)
-        assert run_length == len(result)
+        assert is_solved(result)
         assert sorted(result) == sorted(solved)
 
     def test_solve_from_state_tracks_moves_correctly(self) -> None:
@@ -142,8 +139,7 @@ class TestFullSolve:
         result_state = solve_from_state(initial_state)
         replayed = apply_moves_to_ring(scrambled, result_state.moves)
         assert replayed == result_state.ring
-        _, run_length, _ = get_max_run(result_state.ring)
-        assert run_length == len(result_state.ring)
+        assert is_solved(result_state.ring)
 
     def test_already_solved_state_returns_empty_moves(self) -> None:
         solved = list(range(1, 21))
@@ -154,8 +150,7 @@ class TestFullSolve:
         moves = solve_moves(rotated)
         assert all(move in ["L", "R"] for move in moves)
         result = apply_moves_to_ring(rotated, moves)
-        _, run_length, _ = get_max_run(result)
-        assert run_length == 20
+        assert is_solved(result)
 
 
 class TestWorstCasePerformance:
@@ -184,8 +179,7 @@ class TestWorstCasePerformance:
         elapsed = time.time() - start
 
         result = apply_moves_to_ring(scrambled, moves)
-        _, run_length, _ = get_max_run(result)
-        assert run_length == len(result), f"{description}: Solution failed"
+        assert is_solved(result), f"{description}: Solution failed"
         assert elapsed < 0.1, f"{description}: Took {elapsed:.4f}s (expected < 0.1s)"
 
     def test_seeded_random_generated_case_solves(self) -> None:
@@ -202,8 +196,47 @@ class TestWorstCasePerformance:
         elapsed = time.time() - start
 
         result = apply_moves_to_ring(scrambled, moves)
-        _, run_length, _ = get_max_run(result)
 
-        assert run_length == len(result), "Seeded random case did not solve the ring"
+        assert is_solved(result), "Seeded random case did not solve the ring"
         assert elapsed < 0.1, f"Seeded random case took {elapsed:.4f}s (expected < 0.1s)"
+
+    def test_interleaved_halves_solves(self) -> None:
+        """Interleaved halves: each bead is maximally spread from its neighbours.
+
+        [1, 11, 2, 12, 3, 13, ..., 10, 20] forces the two-ended greedy to alternate
+        head/tail extensions across the full ring, stressing the shift_right primitives.
+        """
+        scrambled = []
+        for i in range(10):
+            scrambled += [i + 1, i + 11]
+
+        start = time.time()
+        moves = solve_moves(scrambled)
+        elapsed = time.time() - start
+
+        result = apply_moves_to_ring(scrambled, moves)
+
+        assert is_solved(result), "Interleaved halves case did not solve the ring"
+        assert elapsed < 0.1, f"Interleaved halves case took {elapsed:.4f}s (expected < 0.1s)"
+
+    def test_empirical_worst_case_solves(self) -> None:
+        """Empirical worst-case ring found by searching 5000 random shuffles (seed=42).
+
+        Produces the highest move count observed (217 moves) under the fixed two-ended greedy
+        solver (which locks onto the chosen run throughout the early game), serving as a
+        regression anchor for future algorithmic changes.
+        """
+        scrambled = [17, 15, 5, 13, 7, 16, 9, 19, 2, 4, 6, 12, 10, 1, 18, 8, 14, 11, 3, 20]
+
+        start = time.time()
+        moves = solve_moves(scrambled)
+        elapsed = time.time() - start
+
+        result = apply_moves_to_ring(scrambled, moves)
+
+        assert is_solved(result), "Empirical worst case did not solve the ring"
+        assert elapsed < 0.1, f"Empirical worst case took {elapsed:.4f}s (expected < 0.1s)"
+        assert len(moves) <= 217, (
+            f"Empirical worst case regressed: {len(moves)} moves (expected <= 217)"
+        )
 

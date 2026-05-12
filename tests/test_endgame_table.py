@@ -14,7 +14,7 @@ from ring_puzzle.endgame import (
     load_endgame_table,
     _TABLE_PATH,
 )
-from ring_puzzle.solver import get_max_run
+from ring_puzzle import is_solved
 
 
 class TestEndgameTableFile:
@@ -59,16 +59,11 @@ class TestEndgameSolutions:
                 ring = _apply_moves_to_ring(ring, [move])
 
             # Check if the ring is solved (all beads in consecutive order, possibly rotated)
-            _, run_length, _ = get_max_run(ring)
-            is_solved = run_length == len(ring)
-
-            if not is_solved:
+            if not is_solved(ring):
                 failures.append(
                     (
                         key,
                         len(moves),
-                        run_length,
-                        len(ring),
                     )
                 )
 

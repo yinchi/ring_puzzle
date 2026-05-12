@@ -1,7 +1,7 @@
 import curses
 import random
 
-SOLVED_RING = list(range(1, 21))
+from .util import FLIP_SIZE, RING_SIZE, is_solved
 
 #    20 01 02 03 04 05
 #  19                  06
@@ -25,14 +25,6 @@ Moves: {20}
 FMT_RING_RED = """{0:02d} {1:02d} {2:02d} {3:02d}"""
 
 
-def is_solved(ring: list[int]) -> bool:
-    """Check if the ring is in a solved state, allowing for any rotation."""
-    return any(
-        ring == SOLVED_RING[offset:] + SOLVED_RING[:offset]
-        for offset in range(len(SOLVED_RING))
-    )
-
-
 def program(stdscr: curses.window) -> None:
     """Main program loop, run inside curses.wrapper."""
     curses.start_color()
@@ -43,7 +35,7 @@ def program(stdscr: curses.window) -> None:
     # Define a color pair (index 1) for red text on the default background.
     curses.init_pair(1, curses.COLOR_RED, -1)
 
-    ring = random.sample(range(1, 21), 20)
+    ring = random.sample(range(1, RING_SIZE + 1), RING_SIZE)
     moves = 0
 
     while True:
@@ -55,7 +47,9 @@ def program(stdscr: curses.window) -> None:
         stdscr.addstr(FMT_RING.format(*ring, moves))
 
         # Re-print the flippable portion of the ring in red
-        stdscr.addstr(0, 6, FMT_RING_RED.format(*ring[:4]), curses.color_pair(1))
+        stdscr.addstr(
+            0, 6, FMT_RING_RED.format(*ring[:FLIP_SIZE]), curses.color_pair(1)
+        )
 
         if solved:
             stdscr.addstr(
@@ -78,11 +72,11 @@ def program(stdscr: curses.window) -> None:
             ring = ring[-1:] + ring[:-1]
             moves += 1
         elif key == ord("f") and not solved:
-            # Flip the first 4 elements of the ring
-            ring[:4] = reversed(ring[:4])
+            # Flip the first FLIP_SIZE elements of the ring
+            ring[:FLIP_SIZE] = reversed(ring[:FLIP_SIZE])
             moves += 1
         elif key == ord("n"):
-            ring = random.sample(range(1, 21), 20)
+            ring = random.sample(range(1, RING_SIZE + 1), RING_SIZE)
             moves = 0
         elif key == ord("a") and not solved:
             # TODO: Implement auto-solve feature when 'a' is pressed.

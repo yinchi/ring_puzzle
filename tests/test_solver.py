@@ -1,16 +1,22 @@
 import pytest
 
 from ring_puzzle.solver import (
+    extend_head,
+    extend_tail,
+    shift_left1,
+    shift_left2,
+    shift_left3,
+    shift_right1,
+    shift_right2,
+    shift_right3,
+)
+from ring_puzzle.util import (
     RingState,
-    extend_max_run,
     get_max_run,
     normalize,
     rotate_left,
     rotate_right,
     rotate_shortest,
-    shift_left1,
-    shift_left2,
-    shift_left3,
 )
 
 
@@ -127,7 +133,7 @@ def test_extend_max_run_increases_longest_run_and_records_replayable_moves(
     be applied to the original ring to achieve the new state."""
     before_start, before_length, _ = get_max_run(ring)
 
-    result = extend_max_run(RingState(ring=ring))
+    result = extend_tail(RingState(ring=ring))
 
     after_start, after_length, _ = get_max_run(result.ring)
     assert after_length > before_length
@@ -141,7 +147,7 @@ def test_extend_max_run_raises_on_solved_ring() -> None:
     solved = RingState(ring=list(range(1, 21)))
 
     with pytest.raises(ValueError, match="already solved"):
-        extend_max_run(solved)
+        extend_tail(solved)
 
 
 def test_extend_max_run_raises_when_endgame_strategy_is_needed() -> None:
@@ -150,4 +156,58 @@ def test_extend_max_run_raises_when_endgame_strategy_is_needed() -> None:
     ring = list(range(1, 17)) + [18, 17, 19, 20]
 
     with pytest.raises(ValueError, match="different strategy"):
-        extend_max_run(RingState(ring=ring))
+        extend_tail(RingState(ring=ring))
+
+
+@pytest.mark.parametrize(
+    ("macro", "ring", "expected", "moves"),
+    [
+        (shift_right3, [1, 2, 3, 4, 5], [4, 3, 2, 1, 5], ["F"]),
+        (shift_right2, [1, 2, 3, 4, 5], [4, 5, 1, 2, 3], ["R", "F", "L", "F"]),
+        (shift_right1, [1, 2, 3, 4, 5], [1, 5, 4, 3, 2], ["F", "R", "F", "L", "F"]),
+    ],
+)
+def test_shift_right_macros_match_documented_permutations(
+    macro, ring: list[int], expected: list[int], moves: list[str]
+) -> None:
+    """Test that the shift_right macros produce the expected permutations and record the
+    correct moves."""
+    result = macro(RingState(ring=ring, offset=7, moves=["L"]))
+
+    assert result.ring == expected
+    assert result.offset == 7
+    assert result.moves == ["L", *moves]
+    assert apply_moves(ring, moves) == expected
+
+
+@pytest.mark.parametrize(
+    "ring",
+    [
+        # pred at dist_head=2 (shift_right2 path)
+        [10, 20, 11, 12, 13, 14, 15, 16, 17, 18, 19, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        # pred at dist_head=3 (shift_right3 path)
+        [10, 20, 19, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        # pred at dist_head >= 4 (repeated shift_right4 path)
+        [10, 20, 19, 18, 17, 11, 12, 13, 14, 15, 16, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    ],
+)
+def test_extend_head_increases_longest_run_and_records_replayable_moves(
+    ring: list[int],
+) -> None:
+    """Test that extend_head increases the length of the longest run by one (at the head)
+    and records moves that can be replayed on the original ring."""
+    _, before_length, _ = get_max_run(ring)
+
+    result = extend_head(RingState(ring=ring))
+
+    _, after_length, _ = get_max_run(result.ring)
+    assert after_length > before_length
+    assert result.ring == apply_moves(ring, result.moves)
+
+
+def test_extend_head_raises_on_solved_ring() -> None:
+    """Test that extend_head raises a ValueError when the ring is already solved."""
+    solved = RingState(ring=list(range(1, 21)))
+
+    with pytest.raises(ValueError, match="already solved"):
+        extend_head(solved)

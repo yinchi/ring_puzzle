@@ -1,31 +1,47 @@
+"""Endgame table generation and lookup for the ring puzzle.
+
+Once the early-game solver (solver.py) has grown the consecutive run to
+ENDGAME_RUN_LENGTH (16 beads), the remaining 4-bead configuration is solved
+by table lookup.
+
+There are exactly 4! = 24 distinct endgame configurations (all permutations of
+the four remaining bead values). The table is generated once by a bidirectional
+BFS over the 4-bead flip zone and stored in endgame.json. At solve time,
+`solve_endgame` normalises the live ring into a canonical orientation, looks up
+the stored move sequence, and replays it.
+
+Normalisation
+-------------
+The ring is relabelled so the protected run starts at value 1 (cyclic shift of
+labels), then physically rotated so the run occupies positions 0..15. The
+4-bead suffix at positions 16..19 forms the lookup key.
+
+Table entries require between 0 and 44 moves. The hardest endgame key is
+(18, 20, 17, 19), which requires 44 moves.
+"""
+
 from __future__ import annotations
 
 import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from heapq import heappop, heappush
 from itertools import permutations
 from pathlib import Path
 from threading import Lock
 from time import monotonic
 
-from .solver import (
+from .util import (
     ENDGAME_RUN_LENGTH,
+    FLIP_SIZE,
+    MoveList,
+    Quartet,
     RingState,
     get_max_run,
+    is_solved,
     normalize,
     rotate_shortest,
 )
-
-# Four ints, e.g. the values of the 4 beads in the flipping zone of the puzzle.
-type Quartet = tuple[int, int, int, int]
-
-# MoveList stores raw atomic moves only (L, R, F).
-# Compact forms like L3 and symbolic forms like S2/M5 are reporting notations, not MoveList items.
-# S2 and S3 are the 2-cycle and 3-cycle macros from the notes, and S3' is the inverse of S3.
-# Notes: https://www.sfu.ca/~jtmulhol/math302/puzzles-ot.html
-type MoveList = list[str]
 
 # Cannot use our early-game solver once the protected run is length 16, so we need a separate
 # endgame table keyed by the 4 flipping beads.
@@ -39,9 +55,6 @@ LEGAL_MOVES = ("L", "R", "F")
 
 # Contains best known solutions for each endgame key as concrete move lists.
 _TABLE_PATH = Path(__file__).with_name("endgame.json")
-# Contains detailed analysis of optimal cycle-based solutions for each endgame key,
-# including macro expansions and step-by-step traces.
-_MACRO_REPORT_PATH = Path(__file__).with_name("endgame_macro_report.json")
 
 # In-memory cache for the generated endgame table to avoid recomputation on repeated runs.
 _TABLE_CACHE: dict[Quartet, MoveList] | None = None
@@ -49,7 +62,7 @@ _TABLE_CACHE: dict[Quartet, MoveList] | None = None
 
 def _apply_move_to_ring(ring: list[int], move: str) -> list[int]:
     """Apply one legal move to a ring and return a new ring.
-    
+
     Works on raw int lists, not RingState, and does not track moves or offsets.
     """
     if move == "L":
@@ -58,7 +71,7 @@ def _apply_move_to_ring(ring: list[int], move: str) -> list[int]:
         return ring[-1:] + ring[:-1]
     if move == "F":
         new_ring = ring[:]
-        new_ring[:4] = reversed(new_ring[:4])
+        new_ring[:FLIP_SIZE] = reversed(new_ring[:FLIP_SIZE])
         return new_ring
     raise ValueError(f"Unknown move: {move}")
 
@@ -80,23 +93,21 @@ def _apply_moves_to_ring(ring: list[int], moves: MoveList) -> list[int]:
     return state
 
 
-def _truncate_useless_rotations(
-    start_ring: list[int], moves: MoveList
-) -> MoveList:
+def _truncate_useless_rotations(start_ring: list[int], moves: MoveList) -> MoveList:
     """Trim a solution once the ring is solved up to rotation."""
     state = start_ring[:]
     for index, move in enumerate(moves, start=1):
         state = _apply_move_to_ring(state, move)
         # If the max run is the whole ring, the ring is solved.
         # Discard any remaining moves, which must be rotations that don't affect the solution.
-        if get_max_run(state)[1] == len(state):
+        if is_solved(state):
             return moves[:index]
     return moves
 
 
 def _canonical_view(ring: list[int]) -> tuple[list[int], int, int]:
     """Build the canonical view of a ring for endgame keying.
-    
+
     Returns (anchored, run_length, run_start) where:
     - `anchored` is the normalized ring logically rotated so the protected run starts at index 0.
       Note normalization relabels beads via a cyclic shift so that the protected run starts with
@@ -125,12 +136,16 @@ def canonical_lookup_key(ring: list[int]) -> Quartet:
     anchored, run_length, _ = _canonical_view(ring)
 
     if run_length < ENDGAME_RUN_LENGTH:
-        raise ValueError("Endgame lookup requires a protected run of at least 16.")
+        raise ValueError(
+            f"Endgame lookup requires a protected run of at least {ENDGAME_RUN_LENGTH}."
+        )
 
     prefix = tuple(anchored[:ENDGAME_RUN_LENGTH])
     expected_prefix = tuple(range(1, ENDGAME_RUN_LENGTH + 1))
     if prefix != expected_prefix:
-        raise ValueError("Canonical endgame view does not fix positions 1..16.")
+        raise ValueError(
+            f"Canonical endgame view does not fix positions 1..{ENDGAME_RUN_LENGTH}."
+        )
 
     suffix = tuple(anchored[ENDGAME_RUN_LENGTH : ENDGAME_RUN_LENGTH + ENDGAME_SIZE])
     if set(suffix) != set(ENDGAME_VALUES):
@@ -141,7 +156,7 @@ def canonical_lookup_key(ring: list[int]) -> Quartet:
 
 def _representative_ring(key: Quartet) -> list[int]:
     """Construct the canonical representative ring for a key.
-    
+
     This is always `1..16` followed by the key.
     """
     return list(range(1, ENDGAME_RUN_LENGTH + 1)) + list(key)
@@ -185,11 +200,6 @@ def _compact_rotations(moves: MoveList) -> str:
     return " ".join(result)
 
 
-
-
-
-
-
 def _key_to_str(key: Quartet) -> str:
     """Convert a key tuple to a string for JSON serialization."""
     return ",".join(str(value) for value in key)
@@ -208,7 +218,7 @@ def _reconstruct_forward_path(
     forward_prev: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
 ) -> MoveList:
     """Reconstruct a path from a forward start state to a meeting state.
-    
+
     `forward_prev` maps each visited node in the forward search tree to its predecessor and the
     move that led to it, except for the root which is the starting node and maps to (None, None).
     """
@@ -230,7 +240,7 @@ def _reconstruct_reverse_tail(
     reverse_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
 ) -> MoveList:
     """Reconstruct a path from a meeting state to the solved target state.
-    
+
     `reverse_next` maps each visited node in the backward search tree to its successor and the
     move to reach it, except for the root which is the target node and maps to (None, None).
     """
@@ -342,7 +352,7 @@ def generate_endgame_table_interleaved(
         node: tuple[int, ...], src_rank: int
     ) -> list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]]:
         """Generate edges in the reverse direction (predecessor, move, node) for a given node.
-        
+
         There are always 3 legal moves, and we apply the inverse move to get the predecessor in
         the reverse search.
         """
@@ -359,7 +369,7 @@ def generate_endgame_table_interleaved(
         node: tuple[int, ...], src_rank: int
     ) -> list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]]:
         """Generate edges in the forward direction (node, move, successor) for a given node.
-        
+
         There are always 3 legal moves, and we apply them directly to get the successor in the
         forward search.
         """
@@ -370,7 +380,7 @@ def generate_endgame_table_interleaved(
             nxt = tuple(nxt_list)
             edges.append((src_rank, move_rank, node, nxt, move))
         return edges
-    
+
     #####################################################
     # INITIALIZATION (AFTER HELPER FUNCTION DEFINITIONS)
     #####################################################
@@ -438,7 +448,9 @@ def generate_endgame_table_interleaved(
                     executor.submit(reverse_edges_for_node, node, src_rank)
                     for src_rank, node in enumerate(sorted_reverse_frontier)
                 ]
-                reverse_edges = [edge for fut in reverse_futures for edge in fut.result()]
+                reverse_edges = [
+                    edge for fut in reverse_futures for edge in fut.result()
+                ]
             else:
                 reverse_edges = [
                     edge
@@ -467,7 +479,6 @@ def generate_endgame_table_interleaved(
 
             # For each unsolved start key:
             for key in keys:
-
                 # If this key is already solved, skip it.
                 if key in solved:
                     continue
@@ -484,7 +495,7 @@ def generate_endgame_table_interleaved(
                 # total_cost = forward_depth + reverse_depth. We collect all meetings at this layer
                 # and pick the best, ensuring true bidirectional BFS optimality.
                 best_meeting: tuple[int, ...] | None = None
-                best_meeting_cost = float('inf')
+                best_meeting_cost = float("inf")
 
                 # Generate edges for the forward frontier, using parallelism if enabled and the
                 # frontier is large enough to benefit from it.
@@ -493,7 +504,9 @@ def generate_endgame_table_interleaved(
                         executor.submit(forward_edges_for_node, node, src_rank)
                         for src_rank, node in enumerate(sorted_frontier)
                     ]
-                    forward_edges = [edge for fut in forward_futures for edge in fut.result()]
+                    forward_edges = [
+                        edge for fut in forward_futures for edge in fut.result()
+                    ]
                 else:
                     forward_edges = [
                         edge
@@ -512,7 +525,9 @@ def generate_endgame_table_interleaved(
                 for _, _, node, nxt, move in forward_edges:
                     if nxt not in prev_map:
                         prev_map[nxt] = (node, move)
-                        forward_depth_by_key[key][nxt] = forward_depth_by_key[key][node] + 1
+                        forward_depth_by_key[key][nxt] = (
+                            forward_depth_by_key[key][node] + 1
+                        )
                         next_frontier.add(nxt)
                         if add_seen_if_new(nxt):
                             maybe_log(depth)
@@ -548,14 +563,16 @@ def generate_endgame_table_interleaved(
                 not forward_frontier_by_key[key] for key in keys if key not in solved
             ):
                 unresolved = [key for key in keys if key not in solved]
-                raise RuntimeError(f"Interleaved search stalled. Unresolved start keys: {unresolved}")
+                raise RuntimeError(
+                    f"Interleaved search stalled. Unresolved start keys: {unresolved}"
+                )
 
     return solved
 
 
 def generate_endgame_table() -> dict[Quartet, MoveList]:
     """Generate the endgame table using optimal interleaved bidirectional BFS.
-    
+
     Returns the shortest solution for each endgame key.
     """
     return generate_endgame_table_interleaved()
@@ -563,7 +580,7 @@ def generate_endgame_table() -> dict[Quartet, MoveList]:
 
 def validate_endgame_table(table: dict[Quartet, MoveList]) -> None:
     """Validate that all solutions in the table actually solve their keys.
-    
+
     This checks validity (solutions work) but not optimality (they may not be shortest).
     """
     for key, moves in table.items():
@@ -629,28 +646,29 @@ if __name__ == "__main__":
 
 def lookup_endgame_moves(ring: list[int]) -> MoveList:
     """Lookup canonical endgame moves for a live ring.
-    
+
     Validates that the returned moves actually solve the ring without checking
     for optimality (which would require expensive table regeneration).
     """
     key = canonical_lookup_key(ring)
     table = load_endgame_table(validate=True)
     moves = table[key][:]
-    
+
     # Quick validation: apply moves and check the ring is solved
     test_ring = ring[:]
     for move in moves:
         test_ring = _apply_move_to_ring(test_ring, move)
-    
+
     # Verify the result is solved (all beads in consecutive order, possibly rotated)
     from .solver import get_max_run
+
     _, run_length, _ = get_max_run(test_ring)
     if run_length != len(test_ring):
         raise RuntimeError(
             f"Endgame table lookup returned invalid moves for key {key}: "
             f"moves {moves} result in run_length {run_length}, not {len(test_ring)}"
         )
-    
+
     return moves
 
 
@@ -662,7 +680,9 @@ def solve_endgame(state: RingState) -> RingState:
     """
     run_start, run_length, _ = get_max_run(state.ring)
     if run_length < ENDGAME_RUN_LENGTH:
-        raise ValueError("Endgame solver requires a protected run of at least 16.")
+        raise ValueError(
+            f"Endgame solver requires a protected run of at least {ENDGAME_RUN_LENGTH}."
+        )
 
     state = rotate_shortest(state, run_start)
 
@@ -672,6 +692,8 @@ def solve_endgame(state: RingState) -> RingState:
 
     final_length = get_max_run(state.ring)[1]
     if final_length != len(state.ring):
-        raise RuntimeError("Endgame move translation failed to solve the ring up to rotation.")
+        raise RuntimeError(
+            "Endgame move translation failed to solve the ring up to rotation."
+        )
 
     return state
