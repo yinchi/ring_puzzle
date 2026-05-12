@@ -577,9 +577,9 @@ def generate_endgame_table() -> dict[Quartet, MoveList]:
 
     Returns the shortest solution for each endgame key.
     """
-    n_workers = os.getenv("N_WORKERS")
-    if n_workers is not None:
-        n_workers = int(n_workers)
+    n_workers_str = os.getenv("N_WORKERS", default=None)
+    if n_workers_str is not None:
+        n_workers = int(n_workers_str)
     else:
         n_workers = (os.cpu_count() or 1) - 1
 
