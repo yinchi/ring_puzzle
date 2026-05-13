@@ -13,3 +13,7 @@ wheels/
 .*_cache/
 .tox/
 *.log
+
+# SQLite sidecar files
+*.sqlite3-wal
+*.sqlite3-shm
