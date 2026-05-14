@@ -1,85 +1,87 @@
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
 }
 
 body {
-  background: #1a1a2e;
-  color: #f0f0f0;
-  font-family: system-ui, sans-serif;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-height: 100vh;
-  padding: 1.5rem 1rem;
-  gap: 1.2rem;
+	background: #1a1a2e;
+	color: #f0f0f0;
+	font-family: system-ui, sans-serif;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-height: 100vh;
+	padding: 1.5rem 1rem;
+	gap: 1.2rem;
 }
 
 a {
-  color: #4cff91;
-  text-decoration: none;
-  font-size: 0.95rem;
-  letter-spacing: 0.04em;
-  transition: color 0.15s;
+	color: #4cff91;
+	text-decoration: none;
+	font-size: 0.95rem;
+	letter-spacing: 0.04em;
+	transition: color 0.15s;
 }
 
 a:hover {
-  color: #e0c96e;
-  text-decoration: underline;
+	color: #e0c96e;
+	text-decoration: underline;
 }
 
 h1 {
-  font-size: 1.6rem;
-  letter-spacing: 0.05em;
-  color: #e0c96e;
+	font-size: 1.6rem;
+	letter-spacing: 0.05em;
+	color: #e0c96e;
 }
 
 #puzzle-container {
-  width: 100%;
-  max-width: 700px;
+	width: 100%;
+	max-width: 700px;
 }
 
 #controls {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: center;
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+	justify-content: center;
 }
 
 #controls button {
-  padding: 0.45rem 0.9rem;
-  font-size: 0.95rem;
-  border: 2px solid #555;
-  border-radius: 6px;
-  background: #2a2a4a;
-  color: #f0f0f0;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-  min-width: 3rem;
+	padding: 0.45rem 0.9rem;
+	font-size: 0.95rem;
+	border: 2px solid #555;
+	border-radius: 6px;
+	background: #2a2a4a;
+	color: #f0f0f0;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		border-color 0.15s;
+	min-width: 3rem;
 }
 
 #controls button:hover:not(:disabled) {
-  background: #3a3a6a;
-  border-color: #aaa;
+	background: #3a3a6a;
+	border-color: #aaa;
 }
 
 #controls button:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
+	opacity: 0.35;
+	cursor: not-allowed;
 }
 
 #stats {
-  font-size: 1rem;
-  color: #ccc;
-  letter-spacing: 0.04em;
+	font-size: 1rem;
+	color: #ccc;
+	letter-spacing: 0.04em;
 }
 
 #solved-banner {
-  font-size: 1.4rem;
-  font-weight: bold;
-  color: #4cff91;
-  letter-spacing: 0.08em;
+	font-size: 1.4rem;
+	font-weight: bold;
+	color: #4cff91;
+	letter-spacing: 0.08em;
 }
-
-

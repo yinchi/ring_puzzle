@@ -6,8 +6,9 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
-.venv
+# Virtual environments and node_modules
+node_modules/
+.venv/
 
 # Cache and log files
 .*_cache/
