@@ -37,6 +37,18 @@ Either Python 3.13 or 3.14 will work in the above command.  Replace `v0.0.1` abo
 
 The controls will be disabled when the puzzle is solved (except for `n` and `q`), so you can admire your handiwork, and while the auto-solver is running.
 
+## Endgame lookup
+
+The solver uses a greedy algorithm to grow a run of beads until it reaches length at least 16,
+then applies an endgame table lookup to determine the sequene of moves that will complete the
+solution.  This is stored at `src/ring_puzzle/endgame.json`.  To regenerate this table, run:
+
+```bash
+uvx --refresh --python 3.13t --from "git+https://github.com/yinchi/ring_puzzle.git@v0.0.1" endgame
+```
+
+Note that multi-threaded Python and at least 128GB of memory is recommended for multi-start bidrectional breadth-first search (one forward-direction search tree for each permutation of the last four beads).  Either Python 3.13t or 3.14t will work in the above command.  Replace `v0.0.1` above with the latest version available.
+
 ## Reference
 
 For a mathematical and permutation theory-oriented discussion of the same puzzle family, see Jamie

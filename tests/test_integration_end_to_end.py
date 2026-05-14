@@ -42,7 +42,7 @@ class TestRotationCancellation:
         moves = ["R", "L", "F"]
         assert cancel_opposite_rotations(moves) == ["F"]
 
-    def test_cancel_opposite_rotations_only_consecutive_pairs(self) -> None:
+    def test_cancel_opposite_rotations_longer_chains(self) -> None:
         moves = ["L", "L", "R", "R", "F"]
         assert cancel_opposite_rotations(moves) == ["L", "R", "F"]
 

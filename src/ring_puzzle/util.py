@@ -9,23 +9,26 @@ the main program loop for the interactive terminal interface.
 
 from dataclasses import dataclass, field
 
-# Flip moves reverse the first FLIP_SIZE elements of the ring.
 FLIP_SIZE = 4
+"""Flip moves reverse the first FLIP_SIZE elements of the ring."""
 
-# Number of beads in the ring.
 RING_SIZE = 20
+"""Number of beads in the ring."""
 
-# A solved ring is the numbers 1 through RING_SIZE in order, allowing for any rotation but
-# not reflections.
 SOLVED_RING = list(range(1, RING_SIZE + 1))
+"""A solved ring is the numbers 1 through RING_SIZE in order, allowing for any rotation but
+not reflections."""
 
 ENDGAME_RUN_LENGTH = RING_SIZE - FLIP_SIZE
+"""The endgame solver is used once we have a run of this length, since the remaining unsolved
+beads fit entirely within the flipping zone."""
 
 type MoveList = list[str]
+"""A sequence of moves, where each move is one of 'L', 'R', or 'F' (for left, right, flip)."""
 
-# A tuple of FLIP_SIZE ints, representing the values of the beads in the flipping zone of the
-# puzzle.
 type Quartet = tuple[int, int, int, int]
+"""A tuple of FLIP_SIZE ints, representing the values of the beads in the flipping zone of the
+puzzle."""
 
 
 def is_solved(ring: list[int]) -> bool:
