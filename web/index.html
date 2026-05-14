@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ring Puzzle</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.ts" type="module"></script>
+  </head>
+  <body>
+    <h1>Ring Puzzle</h1>
+
+    <div id="puzzle-container"></div>
+
+    <div id="controls">
+      <button id="btn-left" title="Rotate left (←)">←</button>
+      <button id="btn-right" title="Rotate right (→)">→</button>
+      <button id="btn-flip" title="Flip (f)">(f)lip</button>
+      <button id="btn-new" title="New game (n)">(n)ew game</button>
+      <button id="btn-auto" title="Auto-solve (a)">(a)uto</button>
+    </div>
+
+    <div id="stats">Moves: 0&nbsp;&nbsp; Flips: 0</div>
+    <div id="solved-banner" hidden>SOLVED!</div>
+  </body>
+</html>
