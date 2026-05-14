@@ -3,12 +3,12 @@ import type { Ring, SlotCoord } from "./types";
 // ── Geometry constants ────────────────────────────────────────────────────────
 
 const SVG_W = 700;
-const SVG_H = 310;
-const BEAD_D = 38;
+const SVG_H = 519;
+const BEAD_D = 74;
 const BEAD_R = BEAD_D / 2;
 const SEMI_R = (6 * BEAD_D) / Math.PI;
 
-const TRACK_CY = 190;
+const TRACK_CY = 315;
 const TOP_Y = TRACK_CY - SEMI_R;
 const BOT_Y = TRACK_CY + SEMI_R;
 
@@ -198,7 +198,7 @@ export function buildSVG(container: HTMLElement): void {
 		const text = svgEl("text");
 		text.setAttribute("text-anchor", "middle");
 		text.setAttribute("dominant-baseline", "central");
-		text.setAttribute("font-size", "14");
+		text.setAttribute("font-size", "27");
 		text.setAttribute("font-weight", "bold");
 		text.setAttribute("fill", "#222");
 		text.setAttribute("pointer-events", "none");
