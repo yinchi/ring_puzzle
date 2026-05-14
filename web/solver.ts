@@ -143,20 +143,19 @@ function twoEndedExtend(state: RingState): RingState {
 }
 
 function cancelOppositeRotations(moves: Move[]): Move[] {
-  const out: Move[] = [];
-  let i = 0;
-  while (i < moves.length) {
+  const stack: Move[] = [];
+  for (const move of moves) {
     if (
-      i < moves.length - 1 &&
-      ((moves[i] === "L" && moves[i + 1] === "R") ||
-        (moves[i] === "R" && moves[i + 1] === "L"))
+      stack.length > 0 &&
+      ((stack[stack.length - 1] === "L" && move === "R") ||
+        (stack[stack.length - 1] === "R" && move === "L"))
     ) {
-      i += 2;
+      stack.pop();
     } else {
-      out.push(moves[i++]);
+      stack.push(move);
     }
   }
-  return out;
+  return stack;
 }
 
 // ---- Public API ----
