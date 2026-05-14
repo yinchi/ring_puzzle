@@ -145,10 +145,12 @@ function twoEndedExtend(state: RingState): RingState {
 function cancelOppositeRotations(moves: Move[]): Move[] {
   const stack: Move[] = [];
   for (const move of moves) {
+const top = stack[stack.length - 1];
     if (
       stack.length > 0 &&
-      ((stack[stack.length - 1] === "L" && move === "R") ||
-        (stack[stack.length - 1] === "R" && move === "L"))
+      ((top === "L" && move === "R") ||
+        (top === "R" && move === "L") ||
+				(top === "F" && move === "F"))
     ) {
       stack.pop();
     } else {

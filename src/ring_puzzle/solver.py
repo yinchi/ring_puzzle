@@ -272,7 +272,7 @@ def solve_moves(ring: list[int]) -> MoveList:
     """Return a full replayable move sequence that solves the ring.
 
     Runs the two-phase solver (early-game greedy + endgame table lookup) and
-    applies `cancel_opposite_rotations` to remove any LR or RL no-ops, which may occur at the
+    applies `cancel_opposite_rotations` to remove any LR, RL, or FF no-ops, which may occur at the
     boundary between the two phases.
     """
     moves = solve_from_state(RingState(ring=ring)).moves
@@ -280,16 +280,15 @@ def solve_moves(ring: list[int]) -> MoveList:
 
 
 def cancel_opposite_rotations(moves: MoveList) -> MoveList:
-    """Remove consecutive opposite rotation pairs (LR or RL) from move sequence."""
-    optimized: MoveList = []
-    i = 0
-    while i < len(moves):
-        if i < len(moves) - 1 and (
-            (moves[i] == "L" and moves[i + 1] == "R") or (moves[i] == "R" and moves[i + 1] == "L")
+    """Remove cancelling move pairs (LR, RL, FF) from move sequence using a stack."""
+    stack: MoveList = []
+    for move in moves:
+        if stack and (
+            (stack[-1] == "L" and move == "R")
+            or (stack[-1] == "R" and move == "L")
+            or (stack[-1] == "F" and move == "F")
         ):
-            # Skip both moves (they cancel)
-            i += 2
+            stack.pop()
         else:
-            optimized.append(moves[i])
-            i += 1
-    return optimized
+            stack.append(move)
+    return stack
