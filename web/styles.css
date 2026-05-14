@@ -16,6 +16,19 @@ body {
   gap: 1.2rem;
 }
 
+a {
+  color: #4cff91;
+  text-decoration: none;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  transition: color 0.15s;
+}
+
+a:hover {
+  color: #e0c96e;
+  text-decoration: underline;
+}
+
 h1 {
   font-size: 1.6rem;
   letter-spacing: 0.05em;

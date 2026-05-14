@@ -49,6 +49,10 @@ uvx --refresh --python 3.13t --from "git+https://github.com/yinchi/ring_puzzle.g
 
 Note that multi-threaded Python and at least 128GB of memory is recommended for multi-start bidrectional breadth-first search (one forward-direction search tree for each permutation of the last four beads).  Either Python 3.13t or 3.14t will work in the above command.  Replace `v0.0.1` above with the latest version available.
 
+## Web version
+
+An animated web version of the command-line app is available at <https://yinchi.github.io/ring_puzzle/>.
+
 ## Reference
 
 For a mathematical and permutation theory-oriented discussion of the same puzzle family, see Jamie
