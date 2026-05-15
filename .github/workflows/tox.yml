@@ -6,7 +6,7 @@ on:
   push:
     branches: ["master"]
     # Only run when files in the src/ring_puzzle/ or tests/ directories change (or this workflow file changes)
-    paths: ["src/ring_puzzle/**", "tests/**", ".github/actions/tox.yml"]
+    paths: ["src/ring_puzzle/**", "tests/**", ".github/workflows/tox.yml"]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
