@@ -21,9 +21,12 @@ Table entries require between 0 and 44 moves. The hardest endgame key is
 
 Table generation
 -----------------
-`uv run endgame` generates the table by interleaving a single reverse BFS from the solved state
-with 24 forward BFSs from each of the unsolved keys, until all keys are solved. The solutions
-are saved to `endgame.json`.
+`uv run endgame` generates the table by running 24 forward BFS searches sequentially against a
+shared reverse BFS tree rooted at the solved state. The reverse tree is expanded lazily: before
+each forward search processes depth f, the shared reverse tree is grown to depth f if needed, so
+expansion work from one key is reused by subsequent keys. To guarantee optimality equivalent to a
+fully interleaved search, each forward search only counts meetings with reverse nodes at depth ≤ f
+(the "pretend" constraint). Solutions are saved to `endgame.json`.
 
 Free-threaded Python is required to use multiple workers for parallel edge generation, thus
 requiring Python 3.13+. The default is to use all but one CPU core, but this can be configured
@@ -38,7 +41,6 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from itertools import permutations
 from pathlib import Path
-from threading import Lock
 from time import monotonic
 from typing import TextIO
 
@@ -84,6 +86,17 @@ def _apply_move_to_ring(ring: list[int], move: str) -> list[int]:
         new_ring = ring[:]
         new_ring[:FLIP_SIZE] = reversed(new_ring[:FLIP_SIZE])
         return new_ring
+    raise ValueError(f"Unknown move: {move}")
+
+
+def _apply_move_bytes(node: bytes, move: str) -> bytes:
+    """Apply one legal move to a ring stored as bytes and return the result as bytes."""
+    if move == "L":
+        return node[1:] + node[:1]
+    if move == "R":
+        return node[-1:] + node[:-1]
+    if move == "F":
+        return bytes(reversed(node[:FLIP_SIZE])) + node[FLIP_SIZE:]
     raise ValueError(f"Unknown move: {move}")
 
 
@@ -171,44 +184,6 @@ def _representative_ring(key: Quartet) -> list[int]:
     return list(range(1, ENDGAME_RUN_LENGTH + 1)) + list(key)
 
 
-def _inverse_moves(moves: MoveList) -> MoveList:
-    """Return inverse move sequence for a legal move list."""
-    inverse = {"L": "R", "R": "L", "F": "F"}
-    return [inverse[move] for move in reversed(moves)]
-
-
-def _compact_rotations(moves: MoveList) -> str:
-    """Write a sequence of moves as a compact string with counts for consecutive rotations.
-
-    E.g. LLLRLLLF -> "L3 R1 L3 F1", and FLLLRR -> "F1 L3 R2".
-    """
-    if not moves:
-        return "ε"
-
-    result = []
-    prev_move = None
-    count = 0
-    for move in moves:
-        if move != prev_move:
-            if prev_move is not None:
-                if prev_move == "F":
-                    result.append("F")
-                else:
-                    result.append(f"{prev_move}{count}")
-            prev_move = move
-            count = 1
-        else:
-            count += 1
-    if prev_move is not None:
-        if prev_move == "F":
-            result.append("F")
-        elif prev_move in ("L", "R"):
-            result.append(f"{prev_move}{count}")
-        else:
-            raise ValueError(f"Unexpected move in compact_rotations: {prev_move}")
-    return " ".join(result)
-
-
 def _key_to_str(key: Quartet) -> str:
     """Convert a key tuple to a string for JSON serialization."""
     return ",".join(str(value) for value in key)
@@ -223,8 +198,8 @@ def _str_to_key(raw: str) -> Quartet:
 
 
 def _reconstruct_forward_path(
-    meeting: tuple[int, ...],
-    forward_prev: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
+    meeting: bytes,
+    forward_prev: dict[bytes, tuple[bytes | None, str | None]],
 ) -> MoveList:
     """Reconstruct a path from a forward start state to a meeting state.
 
@@ -245,8 +220,8 @@ def _reconstruct_forward_path(
 
 
 def _reconstruct_reverse_tail(
-    meeting: tuple[int, ...],
-    reverse_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
+    meeting: bytes,
+    reverse_next: dict[bytes, tuple[bytes | None, str | None]],
 ) -> MoveList:
     """Reconstruct a path from a meeting state to the solved target state.
 
@@ -272,10 +247,20 @@ def generate_endgame_table_interleaved(
     remaining_log_threshold: int = 4,
     n_workers: int | None = None,
 ) -> dict[Quartet, MoveList]:
-    """Generate table by interleaving all starts with one reverse BFS tree.
+    """Generate table by running 24 forward BFS searches sequentially against a shared reverse tree.
 
-    This intentionally favors visibility over speed: it advances one reverse layer and
-    one forward layer (for every unsolved start key) per depth, logging progress.
+    The shared reverse BFS tree is rooted at the solved state and expanded lazily: before each
+    forward search processes depth f, the reverse tree is grown to depth f if it has not been
+    already. Because the reverse tree is shared across all 24 forward searches, expansion work
+    from one key is reused by subsequent keys.
+
+    Optimality guarantee — the "pretend" constraint
+    ------------------------------------------------
+    A meeting between forward node at depth fd and reverse node at depth rd is only counted when
+    rd <= fd. This simulates what a fully interleaved search would have seen: in the original
+    interleaved approach the reverse tree had been expanded to exactly fd layers by the time the
+    forward tree was at depth fd. The constraint prevents "early" reverse hits (from prior keys'
+    expansions) from biasing tie-breaking, guaranteeing results identical to the interleaved BFS.
     """
     ########################
     # INPUT VALIDATION
@@ -294,22 +279,14 @@ def generate_endgame_table_interleaved(
     # INITIALIZATION
     ########################
 
-    # Each permutation of ENDGAME_VALUES is a key, and we will solve for all of them simultaneously.
+    # Each permutation of ENDGAME_VALUES is a key; we solve them one at a time.
     keys: list[Quartet] = sorted(permutations(ENDGAME_VALUES))  # type: ignore[arg-type]
 
     # Map each move to its inverse.
     inverse_move = {"L": "R", "R": "L", "F": "F"}
 
-    # List of solved starting keys and their solutions.
+    # Accumulates solved keys and their move sequences.
     solved: dict[Quartet, MoveList] = {}
-
-    # Lock for synchronizing access to `all_seen` and `total_states_seen` across threads.
-    seen_lock = Lock()
-    all_seen: set[tuple[int, ...]] = set()
-    total_states_seen = 0
-
-    # Track the number of states seen at the last logging point to determine when to log next.
-    last_logged_seen = 0
 
     # Record the start time for logging purposes.
     started_at = monotonic()
@@ -318,74 +295,32 @@ def generate_endgame_table_interleaved(
     # HELPER FUNCTIONS (CLOSURES)
     ##############################
 
-    def add_seen_if_new(state: tuple[int, ...]) -> bool:
-        """Atomically add a state to seen set and increment shared counter once."""
-        nonlocal total_states_seen
-        with seen_lock:
-            if state in all_seen:
-                return False
-            all_seen.add(state)
-            total_states_seen += 1
-            return True
-
-    def get_total_states_seen() -> int:
-        """Atomically get the total number of states seen."""
-        with seen_lock:
-            return total_states_seen
-
-    def maybe_log(depth: int, *, force_depth: bool = False) -> None:
-        """Log progress if we've seen enough new states since the last log or if forced by depth."""
-        nonlocal last_logged_seen
-        seen_now = get_total_states_seen()
-        if force_depth or (seen_now - last_logged_seen) >= log_state_interval:
-            elapsed_s = monotonic() - started_at
-            remaining = [key for key in keys if key not in solved]
-            remaining_suffix = ""
-            if len(remaining) < remaining_log_threshold:
-                remaining_suffix = f" remaining={remaining}"
-            print(
-                (
-                    f"depth={depth} "
-                    f"elapsed_s={elapsed_s:.1f} "
-                    f"total_states_seen={seen_now} "
-                    f"solved_start_states={len(solved)}/{len(keys)}"
-                    f"{remaining_suffix}"
-                ),
-                file=progress_stream,
-                flush=True,
-            )
-            last_logged_seen = seen_now
-
     def reverse_edges_for_node(
-        node: tuple[int, ...], src_rank: int
-    ) -> list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]]:
+        node: bytes, src_rank: int
+    ) -> list[tuple[int, int, bytes, bytes, str]]:
         """Generate edges in the reverse direction (predecessor, move, node) for a given node.
 
         There are always 3 legal moves, and we apply the inverse move to get the predecessor in
         the reverse search.
         """
-        node_list = list(node)
-        edges: list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]] = []
+        edges: list[tuple[int, int, bytes, bytes, str]] = []
 
         for move_rank, move in enumerate(LEGAL_MOVES):
-            predecessor_list = _apply_move_to_ring(node_list, inverse_move[move])
-            predecessor = tuple(predecessor_list)
+            predecessor = _apply_move_bytes(node, inverse_move[move])
             edges.append((src_rank, move_rank, predecessor, node, move))
         return edges
 
     def forward_edges_for_node(
-        node: tuple[int, ...], src_rank: int
-    ) -> list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]]:
+        node: bytes, src_rank: int
+    ) -> list[tuple[int, int, bytes, bytes, str]]:
         """Generate edges in the forward direction (node, move, successor) for a given node.
 
         There are always 3 legal moves, and we apply them directly to get the successor in the
         forward search.
         """
-        node_list = list(node)
-        edges: list[tuple[int, int, tuple[int, ...], tuple[int, ...], str]] = []
+        edges: list[tuple[int, int, bytes, bytes, str]] = []
         for move_rank, move in enumerate(LEGAL_MOVES):
-            nxt_list = _apply_move_to_ring(node_list, move)
-            nxt = tuple(nxt_list)
+            nxt = _apply_move_bytes(node, move)
             edges.append((src_rank, move_rank, node, nxt, move))
         return edges
 
@@ -395,116 +330,120 @@ def generate_endgame_table_interleaved(
 
     # There is a single target node in the reverse search, which is the representative ring for the
     # key 17, 18, 19, 20 representing the solved state.
-    target_ring = tuple(_representative_ring(ENDGAME_VALUES))
+    target_ring = bytes(_representative_ring(ENDGAME_VALUES))
 
     # `reverse_next` maps each visited node in the reverse search tree to its successor and the move
     # to reach it, except for the root which is the target node and maps to (None, None).
-    reverse_next: dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]] = {
-        target_ring: (None, None)
-    }
+    reverse_next: dict[bytes, tuple[bytes | None, str | None]] = {target_ring: (None, None)}
 
     # `reverse_depth` maps each visited node in the reverse tree to its depth from target_ring.
-    # Needed for optimal meeting detection: at meeting, we pick min(forward_depth + reverse_depth).
-    reverse_depth: dict[tuple[int, ...], int] = {target_ring: 0}
+    # Needed for optimal meeting detection and for enforcing the pretend constraint.
+    reverse_depth: dict[bytes, int] = {target_ring: 0}
 
     # BFS frontier for the reverse search, initialized with the target node.
-    reverse_frontier: set[tuple[int, ...]] = {target_ring}
+    reverse_frontier: set[bytes] = {target_ring}
 
-    # For the forward searches, we have one frontier and one visited map per start key. Each visited
-    # map `forward_prev_by_key[key]` maps visited nodes to their predecessor and the move that led
-    # to them, except for the root which is the starting node and maps to (None, None).
-    forward_prev_by_key: dict[
-        Quartet,
-        dict[tuple[int, ...], tuple[tuple[int, ...] | None, str | None]],
-    ] = {}
-    forward_frontier_by_key: dict[Quartet, set[tuple[int, ...]]] = {}
-    # `forward_depth_by_key[key]` maps each visited node to its depth from the starting key.
-    # Used for optimal meeting detection during interleaved BFS.
-    forward_depth_by_key: dict[Quartet, dict[tuple[int, ...], int]] = {}
+    # How many layers the shared reverse tree has been expanded, and its total state count.
+    reverse_max_depth = 0
+    backward_states_seen = 1  # target_ring itself
 
-    # Seed the seen-state bookkeeping with the target state now that the target ring exists.
-    all_seen.add(target_ring)
-    total_states_seen = 1
-    last_logged_seen = total_states_seen
+    ####################################################
+    # SEQUENTIAL FORWARD SEARCHES WITH SHARED REVERSE
+    ####################################################
 
-    for key in keys:
-        start = tuple(_representative_ring(key))
-        forward_prev_by_key[key] = {start: (None, None)}
-        forward_depth_by_key[key] = {start: 0}
-        forward_frontier_by_key[key] = {start}
-        add_seen_if_new(start)
-
-        if start in reverse_next:
-            solved[key] = []
-
-    #############################
-    # PARALLEL INTERLEAVED SEARCH
-    #############################
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        depth = 0
-        while len(solved) < len(keys):
-            depth += 1
 
-            # Initialize the next frontier for the reverse search layer,
-            next_reverse_frontier: set[tuple[int, ...]] = set()
-            sorted_reverse_frontier = sorted(reverse_frontier)
+        def expand_reverse_to(target_depth: int) -> None:
+            """Grow the shared reverse tree to at least `target_depth` layers."""
+            nonlocal reverse_frontier, reverse_max_depth, backward_states_seen
 
-            # Generate edges for the reverse frontier, using parallelism if enabled and the
-            # frontier is large enough to benefit from it.
-            if n_workers > 1 and len(sorted_reverse_frontier) > 1:
-                reverse_futures = [
-                    executor.submit(reverse_edges_for_node, node, src_rank)
-                    for src_rank, node in enumerate(sorted_reverse_frontier)
-                ]
-                reverse_edges = [edge for fut in reverse_futures for edge in fut.result()]
-            else:
-                reverse_edges = [
-                    edge
-                    for src_rank, node in enumerate(sorted_reverse_frontier)
-                    for edge in reverse_edges_for_node(node, src_rank)
-                ]
+            while reverse_max_depth < target_depth and reverse_frontier:
+                sorted_frontier = sorted(reverse_frontier)
+                next_reverse_frontier: set[bytes] = set()
 
-            # Sort edges by source rank and then move rank for deterministic processing order,
-            # which affects tie-breaking when we check for meetings in the forward search.
-            reverse_edges.sort(key=lambda item: (item[0], item[1]))
+                if n_workers > 1 and len(sorted_frontier) > 1:
+                    reverse_futures = [
+                        executor.submit(reverse_edges_for_node, node, src_rank)
+                        for src_rank, node in enumerate(sorted_frontier)
+                    ]
+                    reverse_edges = [edge for fut in reverse_futures for edge in fut.result()]
+                else:
+                    reverse_edges = [
+                        edge
+                        for src_rank, node in enumerate(sorted_frontier)
+                        for edge in reverse_edges_for_node(node, src_rank)
+                    ]
 
-            # Process reverse edges to build the next frontier and update `reverse_next`. We also
-            # add to the shared seen set and maybe log progress as we go.
-            for _, _, predecessor, node, move in reverse_edges:
-                if predecessor in reverse_next:
-                    continue
+                # Sort for deterministic processing order, which affects tie-breaking.
+                reverse_edges.sort(key=lambda item: (item[0], item[1]))
 
-                reverse_next[predecessor] = (node, move)
-                reverse_depth[predecessor] = reverse_depth[node] + 1
-                next_reverse_frontier.add(predecessor)
-                if add_seen_if_new(predecessor):
-                    maybe_log(depth)
+                for _, _, predecessor, node, move in reverse_edges:
+                    if predecessor not in reverse_next:
+                        reverse_next[predecessor] = (node, move)
+                        reverse_depth[predecessor] = reverse_depth[node] + 1
+                        next_reverse_frontier.add(predecessor)
+                        backward_states_seen += 1
 
-            # Move the next reverse frontier into place for the next iteration of the loop.
-            reverse_frontier = next_reverse_frontier
+                reverse_frontier = next_reverse_frontier
+                reverse_max_depth += 1
 
-            # For each unsolved start key:
-            for key in keys:
-                # If this key is already solved, skip it.
-                if key in solved:
-                    continue
+        for key in keys:
+            start = bytes(_representative_ring(key))
 
-                # Get the current frontier and visited map for this key's forward search.
-                prev_map = forward_prev_by_key[key]
-                frontier = forward_frontier_by_key[key]
+            # If start is the target itself (forward depth 0 meets reverse depth 0), solved
+            # trivially.
+            if start == target_ring:
+                solved[key] = []
+                continue
+
+            # `prev_map` records each visited forward node's predecessor and the move leading to it.
+            # The root maps to (None, None).
+            prev_map: dict[bytes, tuple[bytes | None, str | None]] = {start: (None, None)}
+            # `depth_map` records each visited forward node's BFS depth from start.
+            depth_map: dict[bytes, int] = {start: 0}
+            frontier: set[bytes] = {start}
+            forward_states_seen = 1
+
+            # Track combined states seen at the last log point for threshold triggering.
+            last_logged_seen: list[int] = [0]
+
+            def maybe_log(forward_depth: int, *, force: bool = False) -> None:
+                seen_now = forward_states_seen + backward_states_seen
+                if force or (seen_now - last_logged_seen[0]) >= log_state_interval:
+                    elapsed_s = monotonic() - started_at
+                    remaining = [k for k in keys if k not in solved]
+                    remaining_suffix = ""
+                    if len(remaining) < remaining_log_threshold:
+                        remaining_suffix = f" remaining={remaining}"
+                    print(
+                        (
+                            f"key={key} forward_depth={forward_depth} "
+                            f"elapsed_s={elapsed_s:.1f} "
+                            f"forward_states_seen={forward_states_seen} "
+                            f"backward_states_seen={backward_states_seen} "
+                            f"solved_start_states={len(solved)}/{len(keys)}"
+                            f"{remaining_suffix}"
+                        ),
+                        file=progress_stream,
+                        flush=True,
+                    )
+                    last_logged_seen[0] = seen_now
+
+            forward_depth = 0
+            while True:
+                forward_depth += 1
+
+                # Ensure the reverse tree covers at least this depth before checking meetings,
+                # mirroring the original interleaved approach where reverse expanded before forward.
+                expand_reverse_to(forward_depth)
+
                 sorted_frontier = sorted(frontier)
+                next_frontier: set[bytes] = set()
 
-                # Initialize the next frontier for the forward search layer.
-                next_frontier: set[tuple[int, ...]] = set()
-
-                # Best meeting found at this forward layer: (node, total_cost) where
-                # total_cost = forward_depth + reverse_depth. We collect all meetings at this layer
-                # and pick the best, ensuring true bidirectional BFS optimality.
-                best_meeting: tuple[int, ...] | None = None
+                # Best meeting found at this layer: pick minimum forward_depth + reverse_depth.
+                best_meeting: bytes | None = None
                 best_meeting_cost = float("inf")
 
-                # Generate edges for the forward frontier, using parallelism if enabled and the
-                # frontier is large enough to benefit from it.
                 if n_workers > 1 and len(sorted_frontier) > 1:
                     forward_futures = [
                         executor.submit(forward_edges_for_node, node, src_rank)
@@ -518,56 +457,47 @@ def generate_endgame_table_interleaved(
                         for edge in forward_edges_for_node(node, src_rank)
                     ]
 
-                # Sort edges by source rank and then move rank for deterministic processing order,
-                # which affects tie-breaking when we check for meetings.
+                # Sort for deterministic processing order, which affects tie-breaking.
                 forward_edges.sort(key=lambda item: (item[0], item[1]))
 
-                # For each edge in the forward search, if it leads to an unseen node, add it to the
-                # next frontier and update the visited map. If the node is already in the reverse
-                # visited map, it is a potential meeting point. We collect all meetings at this
-                # layer and pick the one with minimum forward_depth + reverse_depth.
                 for _, _, node, nxt, move in forward_edges:
                     if nxt not in prev_map:
                         prev_map[nxt] = (node, move)
-                        forward_depth_by_key[key][nxt] = forward_depth_by_key[key][node] + 1
+                        depth_map[nxt] = forward_depth
                         next_frontier.add(nxt)
-                        if add_seen_if_new(nxt):
-                            maybe_log(depth)
+                        forward_states_seen += 1
 
-                    if nxt in reverse_next:
-                        # Meeting found: record if it is the best at this layer.
-                        forward_d = forward_depth_by_key[key][nxt]
+                    # Pretend constraint: only count reverse nodes at depth <= forward_depth.
+                    # This reproduces the meeting detection of the original interleaved approach,
+                    # where the reverse tree had at most forward_depth layers at this point.
+                    if nxt in reverse_next and reverse_depth[nxt] <= forward_depth:
+                        forward_d = depth_map[nxt]
                         reverse_d = reverse_depth[nxt]
                         total_cost = forward_d + reverse_d
                         if total_cost < best_meeting_cost:
                             best_meeting_cost = total_cost
                             best_meeting = nxt
 
-                # If we found a meeting at this layer, use the best one (by total cost) and record
-                # it as the solution for this key, which is then removed from the forward BFS.
+                # Always emit at least one line per depth.
+                maybe_log(forward_depth)
+
                 if best_meeting is not None:
                     prefix = _reconstruct_forward_path(best_meeting, prev_map)
                     suffix = _reconstruct_reverse_tail(best_meeting, reverse_next)
                     solved[key] = _truncate_useless_rotations(
                         _representative_ring(key), prefix + suffix
                     )
-                    forward_frontier_by_key[key] = set()
-                else:
-                    forward_frontier_by_key[key] = next_frontier
+                    maybe_log(forward_depth, force=True)
+                    break
 
-            # Always emit at least one line for each completed depth.
-            maybe_log(depth, force_depth=True)
+                frontier = next_frontier
 
-            # If the reverse frontier and all forward frontiers for unsolved keys are empty, then
-            # we are stalled and cannot make further progress. This should not happen in a solvable
-            # search space; in any case, raise an error.
-            if not reverse_frontier and all(
-                not forward_frontier_by_key[key] for key in keys if key not in solved
-            ):
-                unresolved = [key for key in keys if key not in solved]
-                raise RuntimeError(
-                    f"Interleaved search stalled. Unresolved start keys: {unresolved}"
-                )
+                # If the frontier is empty and no meeting was found, the search space is exhausted,
+                # which should never happen in a fully connected puzzle graph.
+                if not frontier:
+                    raise RuntimeError(
+                        f"Forward search stalled for key {key} at depth {forward_depth}"
+                    )
 
     return solved
 
