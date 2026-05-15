@@ -23,11 +23,11 @@ const INDENT_OFFSET = FLIP_R * 0.55; // further from track: gap ≈ 8 px
 
 const TRACK_EXTRA = 10; // px the dark-gray band extends beyond bead outer edges
 
-const SHIFT_DURATION = 500;
-const FLIP_DURATION = 1000;
+const SHIFT_DURATION = 300;
+const FLIP_DURATION = 700;
 
 // Beads travel one slot (≈ BEAD_D px of arc) per step; cap their speed.
-const MAX_BEAD_SPEED_PX_MS = 0.2; // px per ms
+const MAX_BEAD_SPEED_PX_MS = 0.3; // px per ms
 const RUN_STEP_DURATION = Math.round(BEAD_D / MAX_BEAD_SPEED_PX_MS);
 
 // ── SVG path generators ───────────────────────────────────────────────────────
