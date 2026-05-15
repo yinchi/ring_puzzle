@@ -32,6 +32,6 @@ jobs:
         uses: astral-sh/setup-uv@v7
       - name: Install tox
         run: |
-          uv tool install --python ${{ matrix.python-version }} tox --with tox-gh
+          uv tool install --python ${{ matrix.python-version }} tox --with tox-gh --with tox-uv
       - name: Run tests
         run: tox
