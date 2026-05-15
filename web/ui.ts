@@ -183,7 +183,7 @@ export function buildSVG(container: HTMLElement): void {
 		g.setAttribute("class", "bead");
 		g.dataset.slot = String(slot);
 		const { x, y } = SLOT_POSITIONS[slot];
-		g.setAttribute("transform", `translate(${x},${y})`);
+		g.style.transform = `translate(${x}px, ${y}px)`;
 
 		// Inner g — counter-rotated during flip so labels stay upright
 		const inner = svgEl("g");
@@ -235,14 +235,14 @@ function waitTransitionEnd(el: Element): Promise<void> {
 function setBeadTranslate(slot: number, x: number, y: number, transition: string): void {
 	const g = beadEls[slot];
 	g.style.transition = transition;
-	g.setAttribute("transform", `translate(${x},${y})`);
+	g.style.transform = `translate(${x}px, ${y}px)`;
 }
 
 function resetBeadTranslate(slot: number): void {
 	const g = beadEls[slot];
 	g.style.transition = "none";
 	const { x, y } = SLOT_POSITIONS[slot];
-	g.setAttribute("transform", `translate(${x},${y})`);
+	g.style.transform = `translate(${x}px, ${y}px)`;
 }
 
 // ── Animate shift ─────────────────────────────────────────────────────────────
@@ -291,7 +291,7 @@ export async function animateShiftRun(
 				const g = beadEls[slot];
 				g.style.transition = "none";
 				const { x, y } = SLOT_POSITIONS[pos[slot]];
-				g.setAttribute("transform", `translate(${x},${y})`);
+				g.style.transform = `translate(${x}px, ${y}px)`;
 			}
 		}
 	}
@@ -369,7 +369,7 @@ export async function animateFlip(ring: Ring): Promise<void> {
 		const g = beadEls[slot];
 		g.style.transition = "none";
 		const { x, y } = SLOT_POSITIONS[slot];
-		g.setAttribute("transform", `translate(${x},${y})`);
+		g.style.transform = `translate(${x}px, ${y}px)`;
 		svgRoot.appendChild(g);
 	}
 }
