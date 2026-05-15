@@ -35,3 +35,5 @@ jobs:
           uv tool install --python ${{ matrix.python-version }} tox --with tox-gh --with tox-uv
       - name: Run tests
         run: tox
+        env:
+          GH_TOX_PY_VERSION: ${{ matrix.python-version }}
