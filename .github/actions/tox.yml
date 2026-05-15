@@ -1,0 +1,37 @@
+# Simple workflow for running Tox checks on Python code
+name: Tox for Python checks
+
+on:
+  # Runs on pushes targeting the default branch
+  push:
+    branches: ["master"]
+    # Only run when files in the src/ring_puzzle/ or tests/ directories change (or this workflow file changes)
+    paths: ["src/ring_puzzle/**", "tests/**", ".github/actions/tox.yml"]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "tests"
+
+jobs:
+  python-checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.14t', '3.14', '3.13t', '3.13']
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Install tox
+        run: |
+          uv tool install --python ${{ matrix.python-version }} tox --with tox-gh
+      - name: Run tests
+        run: tox

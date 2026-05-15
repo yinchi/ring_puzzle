@@ -38,7 +38,13 @@ env_list = ["py313t", "py314t", "py313", "py314"]
 
 [tool.tox.env_run_base]
 runner = "uv-venv-lock-runner"
-commands = [["pytest", "{posargs}"]]
+commands = [["pytest", "tests/"]]
+
+[tool.tox.gh.python]
+"3.14t" = ["py314t"]
+"3.14" = ["py314"]
+"3.13t" = ["py313t"]
+"3.13" = ["py313"]
 
 [dependency-groups]
 dev = [
@@ -56,4 +62,3 @@ line_length=100
 # Match ruff --format settings
 multi_line_output = 3
 include_trailing_comma = true
-
